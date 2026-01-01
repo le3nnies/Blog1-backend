@@ -47,9 +47,18 @@ exports.authMiddleware = async (req, res, next) => {
 
 // Admin middleware usually doesn't need changes as it relies on req.user set above
 exports.adminMiddleware = (req, res, next) => {
+  console.log('Admin middleware check:', {
+    userId: req.user?._id,
+    userRole: req.user?.role,
+    userEmail: req.user?.email,
+    hasUser: !!req.user,
+    isAdmin: req.user?.role === 'admin'
+  });
+
   if (req.user && req.user.role === 'admin') {
     next();
   } else {
+    console.log('Admin access denied for user:', req.user);
     return res.status(403).json({
       success: false,
       error: 'Admin access required'

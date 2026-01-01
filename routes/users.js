@@ -7,6 +7,9 @@ const { authMiddleware, adminMiddleware } = require('../middleware/auth');
 router.use(authMiddleware);
 router.use(adminMiddleware);
 
+// Get authors for article creation (Admin only) - MUST be before :id routes
+router.get('/authors', userController.getAuthors);
+
 // Get all users (with optional role filtering)
 router.get('/', userController.getAllUsers);
 

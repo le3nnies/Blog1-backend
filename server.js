@@ -1,4 +1,3 @@
-// server.js - UPDATED WITH DEBUG CODE
 require('dotenv').config();
 const express = require('express');
 const mongoose = require('mongoose');
@@ -13,6 +12,17 @@ const cron = require('node-cron');
 const path = require('path');
 const fs = require('fs');
 
+// Import SSL configuration
+const sslConfig = require('./utils/ssl');
+
+// Import URL security middleware
+const URLSecurity = require('./middleware/urlSecurity');
+
+const app = express();
+//const cron = require('node-cron');
+//const path = require('path');
+//const fs = require('fs');
+
 // Import routes
 const articleRoutes = require('./routes/articles');
 const authRoutes = require('./routes/auth');
@@ -23,11 +33,10 @@ const adminRoutes = require('./routes/admin');
 const stripeRoutes = require('./routes/stripe'); // FIXED: Changed from stripe-service to stripe
 const adsSettingsRoutes = require('./routes/adsSettings');
 const userRoutes = require('./routes/users');
+const secureAdminRoutes = require('./routes/secureAdmin');
 
 // Import tracking middleware
 const { trackPageView } = require('./middleware/tracking');
-
-const app = express();
 
 // Connect to database
 connectDB();
@@ -41,7 +50,7 @@ app.use(helmet({
 
 // CORS configuration
 app.use(cors({
-  origin: process.env.FRONTEND_URL,
+  origin: process.env.FRONTEND_URL || 'http://localhost:8080',
   credentials: true
 }));
 
@@ -127,6 +136,7 @@ app.use('/api/ads', adsSettingsRoutes); // Ads settings routes
 app.use('/api/analytics', analyticsRoutes);
 app.use('/api/newsletter', newsletterRoutes);
 app.use('/api/admin', adminRoutes);
+app.use('/api/admin/secure', secureAdminRoutes); // Secure admin routes with URL obfuscation
 app.use('/api/newsletter', subscriberRoutes);
 app.use('/api/ads/stripe', stripeRoutes); // FIXED: Changed from /stripe-service to /stripe
 app.use('/api/users', userRoutes);
@@ -211,11 +221,30 @@ app.use((error, req, res, next) => {
   });
 });
 
-const PORT = process.env.PORT;
+const PORT = process.env.PORT || 5000;
+const USE_HTTPS = process.env.USE_HTTPS === 'true' || process.env.NODE_ENV === 'production';
 
-app.listen(PORT, () => {
+// Start server with HTTPS if enabled
+const server = USE_HTTPS ? sslConfig.createHTTPSServer(app, PORT) : app.listen(PORT, () => {
   console.log(`\n✅ Server running in ${process.env.NODE_ENV} mode on port ${PORT}`);
+  console.log(`🔗 URL: http://localhost:${PORT}`);
+  console.log('⚠️  WARNING: Running in HTTP mode. URLs are not encrypted!');
+  console.log('💡 To enable HTTPS, set USE_HTTPS=true in environment variables');
+});
 
+if (USE_HTTPS && server) {
+  // Start background jobs after HTTPS server is ready
+  server.on('listening', () => {
+    console.log(`🔒 HTTPS Server running on https://localhost:${PORT}`);
+    console.log('✅ URLs are now encrypted with SSL/TLS');
+    startBackgroundJobs();
+  });
+} else if (!USE_HTTPS) {
+  // Start background jobs for HTTP server
+  startBackgroundJobs();
+}
+
+function startBackgroundJobs() {
   // Start background jobs
   startTrendingScoreUpdates();
 
@@ -249,7 +278,7 @@ app.listen(PORT, () => {
 
   console.log('📅 Newsletter scheduler started - Weekly delivery every Sunday at 10 AM');
   console.log('🧹 Session cleanup scheduler started - Every 30 minutes');
-});
+}
 
 // Graceful shutdown
 process.on('SIGTERM', () => {

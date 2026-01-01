@@ -79,7 +79,8 @@ class AnalyticsController {
         geoCountries,
         geoCities,
         geoRegions,
-        geoContinents
+        geoContinents,
+        hourlyTraffic
       ] = await Promise.all([
         // Total page views
         PageView.countDocuments(dateFilter),
@@ -100,16 +101,21 @@ class AnalyticsController {
           publishedAt: { $lte: previousToDate }
         }),
 
-        // Session stats
+        // Session stats - only consider completed sessions for accurate duration calculation
         Session.aggregate([
-          { $match: { endTime: { $gte: fromDate, $lte: toDate } } },
+          { $match: {
+            $or: [
+              { isActive: false, endTime: { $gte: fromDate, $lte: toDate } },
+              { isActive: true, startTime: { $gte: fromDate, $lte: toDate } }
+            ]
+          } },
           {
             $group: {
               _id: null,
               avgDuration: { $avg: '$duration' },
               totalSessions: { $sum: 1 },
-              avgPageViews: { $avg: '$pageViewCount' },
-              bounceSessions: { $sum: { $cond: [{ $eq: ['$pageViewCount', 1] }, 1, 0] } }
+              avgPageViews: { $avg: '$pageCount' },
+              bounceSessions: { $sum: { $cond: [{ $eq: ['$pageCount', 1] }, 1, 0] } }
             }
           }
         ]),
@@ -250,7 +256,12 @@ class AnalyticsController {
         
         // Device data - enhanced with detailed breakdowns
         Session.aggregate([
-          { $match: { endTime: { $gte: fromDate, $lte: toDate } } },
+          { $match: {
+            $or: [
+              { isActive: false, endTime: { $gte: fromDate, $lte: toDate } },
+              { isActive: true, startTime: { $gte: fromDate, $lte: toDate } }
+            ]
+          } },
           {
             $group: {
               _id: '$deviceType',
@@ -270,7 +281,17 @@ class AnalyticsController {
 
         // Detailed device breakdown by brand
         Session.aggregate([
-          { $match: { endTime: { $gte: fromDate, $lte: toDate }, deviceBrand: { $ne: null, $ne: 'Unknown' } } },
+          { $match: {
+            $and: [
+              { deviceBrand: { $ne: null, $ne: 'Unknown' } },
+              {
+                $or: [
+                  { isActive: false, endTime: { $gte: fromDate, $lte: toDate } },
+                  { isActive: true, startTime: { $gte: fromDate, $lte: toDate } }
+                ]
+              }
+            ]
+          } },
           {
             $group: {
               _id: '$deviceBrand',
@@ -286,7 +307,17 @@ class AnalyticsController {
 
         // Screen resolution breakdown
         Session.aggregate([
-          { $match: { endTime: { $gte: fromDate, $lte: toDate }, screenResolution: { $ne: null } } },
+          { $match: {
+            $and: [
+              { screenResolution: { $ne: null } },
+              {
+                $or: [
+                  { isActive: false, endTime: { $gte: fromDate, $lte: toDate } },
+                  { isActive: true, startTime: { $gte: fromDate, $lte: toDate } }
+                ]
+              }
+            ]
+          } },
           {
             $group: {
               _id: '$screenResolution',
@@ -300,7 +331,12 @@ class AnalyticsController {
 
         // Device category breakdown
         Session.aggregate([
-          { $match: { endTime: { $gte: fromDate, $lte: toDate } } },
+          { $match: {
+            $or: [
+              { isActive: false, endTime: { $gte: fromDate, $lte: toDate } },
+              { isActive: true, startTime: { $gte: fromDate, $lte: toDate } }
+            ]
+          } },
           {
             $group: {
               _id: '$deviceCategory',
@@ -325,7 +361,12 @@ class AnalyticsController {
         
         // Visitor stats
         Session.aggregate([
-          { $match: { endTime: { $gte: fromDate, $lte: toDate } } },
+          { $match: {
+            $or: [
+              { isActive: false, endTime: { $gte: fromDate, $lte: toDate } },
+              { isActive: true, startTime: { $gte: fromDate, $lte: toDate } }
+            ]
+          } },
           {
             $group: {
               _id: '$isNewVisitor',
@@ -336,7 +377,13 @@ class AnalyticsController {
 
         // Geographic data - countries
         Session.aggregate([
-          { $match: { endTime: { $gte: fromDate, $lte: toDate }, country: { $ne: null } } },
+          { $match: {
+            $or: [
+              { isActive: false, endTime: { $gte: fromDate, $lte: toDate } },
+              { isActive: true, startTime: { $gte: fromDate, $lte: toDate } }
+            ],
+            country: { $ne: null }
+          } },
           {
             $group: {
               _id: { country: '$country' },
@@ -351,7 +398,13 @@ class AnalyticsController {
 
         // Geographic data - cities
         Session.aggregate([
-          { $match: { endTime: { $gte: fromDate, $lte: toDate }, city: { $ne: null, $ne: 'Unknown' } } },
+          { $match: {
+            $or: [
+              { isActive: false, endTime: { $gte: fromDate, $lte: toDate } },
+              { isActive: true, startTime: { $gte: fromDate, $lte: toDate } }
+            ],
+            city: { $ne: null, $ne: 'Unknown' }
+          } },
           {
             $group: {
               _id: { city: '$city', country: '$country', countryCode: '$countryCode' },
@@ -365,7 +418,13 @@ class AnalyticsController {
 
         // Geographic data - regions
         Session.aggregate([
-          { $match: { endTime: { $gte: fromDate, $lte: toDate }, region: { $ne: null, $ne: 'Unknown' } } },
+          { $match: {
+            $or: [
+              { isActive: false, endTime: { $gte: fromDate, $lte: toDate } },
+              { isActive: true, startTime: { $gte: fromDate, $lte: toDate } }
+            ],
+            region: { $ne: null, $ne: 'Unknown' }
+          } },
           {
             $group: {
               _id: { region: '$region', country: '$country', countryCode: '$countryCode' },
@@ -378,7 +437,13 @@ class AnalyticsController {
 
         // Geographic data - continents
         Session.aggregate([
-          { $match: { endTime: { $gte: fromDate, $lte: toDate }, continent: { $ne: null, $ne: 'Unknown' } } },
+          { $match: {
+            $or: [
+              { isActive: false, endTime: { $gte: fromDate, $lte: toDate } },
+              { isActive: true, startTime: { $gte: fromDate, $lte: toDate } }
+            ],
+            continent: { $ne: null, $ne: 'Unknown' }
+          } },
           {
             $group: {
               _id: '$continent',
@@ -394,6 +459,26 @@ class AnalyticsController {
             }
           },
           { $sort: { count: -1 } }
+        ]),
+
+        // Hourly traffic (page views by hour of day)
+        PageView.aggregate([
+          { $match: dateFilter },
+          {
+            $group: {
+              _id: { $hour: '$createdAt' },
+              views: { $sum: 1 },
+              uniqueSessions: { $addToSet: '$sessionId' }
+            }
+          },
+          {
+            $project: {
+              hour: '$_id',
+              views: 1,
+              uniqueVisitors: { $size: '$uniqueSessions' }
+            }
+          },
+          { $sort: { hour: 1 } }
         ])
       ]);
 
@@ -416,10 +501,10 @@ class AnalyticsController {
       });
 
       // Calculate derived metrics
-      const avgSessionDuration = sessionStats[0] ? Math.round(sessionStats[0].avgDuration) : 0;
+      const avgSessionDuration = sessionStats[0] ? Math.round(sessionStats[0].avgDuration / 60) : 0; // Convert seconds to minutes
       const avgPagesPerSession = sessionStats[0] ? Math.round(sessionStats[0].avgPageViews) : 0;
-      const bounceRate = sessionStats[0] && sessionStats[0].totalSessions > 0 
-        ? Math.round((sessionStats[0].bounceSessions / sessionStats[0].totalSessions) * 100) 
+      const bounceRate = sessionStats[0] && sessionStats[0].totalSessions > 0
+        ? Math.round((sessionStats[0].bounceSessions / sessionStats[0].totalSessions) * 100)
         : 0;
 
       const newVisitors = visitorStats.find(v => v._id === true)?.count || 0;
@@ -513,6 +598,11 @@ class AnalyticsController {
           data: engagementTrends,
           title: 'Engagement Trends',
           description: 'Daily engagement metrics over time'
+        },
+        hourlyTraffic: {
+          data: hourlyTraffic,
+          title: 'Hourly Traffic',
+          description: 'Page views by hour of day'
         }
       };
 
@@ -594,7 +684,7 @@ class AnalyticsController {
             sessions: country.count,
             percentage: Math.round((country.count / (sessionStats[0]?.totalSessions || 1)) * 100),
             views: country.totalViews,
-            avgDuration: Math.round(country.avgDuration || 0)
+            avgDuration: Math.round((country.avgDuration || 0) / 60)
           })),
           cities: geoCities.map(city => ({
             city: city._id.city,
@@ -1142,6 +1232,108 @@ class AnalyticsController {
       res.status(500).json({
         success: false,
         error: 'Failed to fetch total views'
+      });
+    }
+  }
+
+  // Get active sessions with details
+  async getActiveSessions(req, res) {
+    try {
+      const { limit = 50 } = req.query;
+      const minutes = 30; // Consider sessions active within last 30 minutes
+
+      const cutoffTime = new Date(Date.now() - minutes * 60 * 1000);
+
+      // Get active sessions with user details
+      const activeSessions = await Session.find({
+        endTime: { $gte: cutoffTime },
+        isActive: true
+      })
+      .populate('userId', 'username email avatar')
+      .sort({ endTime: -1 })
+      .limit(parseInt(limit))
+      .lean();
+
+      // Get current page views for these sessions
+      const sessionIds = activeSessions.map(session => session.sessionId);
+      const recentPageViews = await PageView.find({
+        sessionId: { $in: sessionIds },
+        createdAt: { $gte: cutoffTime }
+      })
+      .populate('articleId', 'title slug')
+      .sort({ createdAt: -1 })
+      .lean();
+
+      // Group page views by session
+      const pageViewsBySession = {};
+      recentPageViews.forEach(view => {
+        if (!pageViewsBySession[view.sessionId]) {
+          pageViewsBySession[view.sessionId] = [];
+        }
+        pageViewsBySession[view.sessionId].push(view);
+      });
+
+      // Format active sessions data
+      const formattedSessions = activeSessions.map(session => {
+        const pageViews = pageViewsBySession[session.sessionId] || [];
+        const currentPage = pageViews[0]; // Most recent page view
+
+        return {
+          sessionId: session.sessionId,
+          user: session.userId ? {
+            id: session.userId._id,
+            username: session.userId.username,
+            email: session.userId.email,
+            avatar: session.userId.avatar
+          } : null,
+          device: {
+            type: session.deviceType,
+            brand: session.deviceBrand,
+            model: session.deviceModel,
+            os: session.os,
+            browser: session.browser
+          },
+          location: {
+            country: session.country,
+            city: session.city,
+            region: session.region
+          },
+          currentPage: currentPage ? {
+            title: currentPage.articleId?.title || 'Homepage',
+            slug: currentPage.articleId?.slug || '/',
+            url: currentPage.pageUrl,
+            timestamp: currentPage.createdAt
+          } : null,
+          session: {
+            startTime: session.startTime,
+            lastActivity: session.endTime,
+            duration: session.duration,
+            pageViews: session.pageCount,
+            isActive: session.isActive
+          },
+          recentPages: pageViews.slice(0, 5).map(view => ({
+            title: view.articleId?.title || 'Homepage',
+            slug: view.articleId?.slug || '/',
+            timestamp: view.createdAt
+          }))
+        };
+      });
+
+      res.json({
+        success: true,
+        data: {
+          activeSessions: formattedSessions,
+          totalActive: formattedSessions.length,
+          lastUpdated: new Date().toISOString()
+        }
+      });
+
+    } catch (error) {
+      console.error('Active sessions error:', error);
+      res.status(500).json({
+        success: false,
+        error: 'Failed to fetch active sessions',
+        message: error.message
       });
     }
   }

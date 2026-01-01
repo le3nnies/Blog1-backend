@@ -622,6 +622,30 @@ class UserController {
     // Sort by timestamp descending
     return logs.sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
   }
+
+  // Get authors for article creation (Admin only)
+  async getAuthors(req, res) {
+    try {
+      const authors = await User.find({
+        role: { $in: ['admin', 'author', 'editor'] },
+        isActive: true
+      })
+      .select('username email avatar bio role')
+      .sort({ username: 1 })
+      .exec();
+
+      res.json({
+        success: true,
+        data: authors
+      });
+    } catch (error) {
+      console.error('Get authors error:', error);
+      res.status(500).json({
+        success: false,
+        error: 'Failed to fetch authors'
+      });
+    }
+  }
 }
 
 module.exports = new UserController();

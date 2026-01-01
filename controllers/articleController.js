@@ -96,7 +96,7 @@ async getAllArticles(req, res) {
     }
 
     const articles = await Article.find(query)
-      .populate('author', 'username avatar')
+      .populate('author', 'username avatar bio')
       .sort({ [sortBy]: sortOrder })
       .skip(skip)
       .limit(limit)
@@ -163,7 +163,7 @@ async getArticleStats(req, res) {
       status: 'published',
       createdAt: dateFilter
     })
-      .populate('author', 'username')
+      .populate('author', 'username bio')
       .sort({ views: -1 })
       .limit(5)
       .select('title views likesCount trendingScore');
@@ -211,7 +211,7 @@ async updateArticleStatus(req, res) {
       id,
       updateData,
       { new: true }
-    ).populate('author', 'username avatar');
+    ).populate('author', 'username avatar bio');
 
     if (!article) {
       return res.status(404).json({
@@ -325,7 +325,7 @@ async bulkArticleOperations(req, res) {
     console.log('🔍 Backend: MongoDB query:', JSON.stringify(query));
 
     let article = await Article.findOne(query)
-      .populate('author', 'username avatar')
+      .populate('author', 'username avatar bio')
       .populate({
         path: 'comments.user',
         select: 'username avatar',
@@ -432,7 +432,7 @@ async getArticleById(req, res) {
       // 3. Find the article in the database, populating the author (if applicable)
       // We use lean() for faster read performance since we don't need Mongoose documents methods
       const article = await Article.findById(id)
-          .populate('author', 'username firstName lastName avatar') // Assuming you want author details
+          .populate('author', 'username firstName lastName avatar bio') // Assuming you want author details
           .select('-__v') // Exclude the Mongoose version key
           .lean();
 
@@ -464,7 +464,7 @@ async getArticleById(req, res) {
         category,
         status: 'published'
       })
-        .populate('author', 'username avatar')
+        .populate('author', 'username avatar bio')
         .sort({ publishedAt: -1 })
         .skip(skip)
         .limit(limit)
@@ -685,7 +685,8 @@ async getArticleById(req, res) {
         metaDescription,
         status,
         scheduledFor,
-        featuredImage
+        featuredImage,
+        author: authorId
       } = req.body;
 
       // Generate slug from title
@@ -704,6 +705,34 @@ async getArticleById(req, res) {
         });
       }
 
+      // Validate author if provided (Admin only)
+      let articleAuthor = req.user._id;
+      if (authorId) {
+        // Only admins can specify a different author
+        if (req.user.role !== 'admin') {
+          return res.status(403).json({
+            success: false,
+            error: 'Only admins can specify article authors'
+          });
+        }
+
+        // Validate that the specified author exists and has appropriate role
+        const author = await require('../models/User').findOne({
+          _id: authorId,
+          isActive: true,
+          role: { $in: ['admin', 'author', 'editor'] }
+        });
+
+        if (!author) {
+          return res.status(400).json({
+            success: false,
+            error: 'Invalid or inactive author'
+          });
+        }
+
+        articleAuthor = authorId;
+      }
+
       const articleData = {
         title,
         content,
@@ -711,7 +740,7 @@ async getArticleById(req, res) {
         slug,
         category,
         tags: tags || [],
-        author: req.user._id,
+        author: articleAuthor,
         metaTitle: metaTitle || title,
         metaDescription: metaDescription || excerpt || content.substring(0, 150),
         status: status || 'published'
@@ -734,7 +763,7 @@ async getArticleById(req, res) {
       await article.save();
 
       // Populate author data
-      await article.populate('author', 'username avatar');
+      await article.populate('author', 'username avatar bio');
 
       res.status(201).json({
         success: true,
@@ -814,7 +843,7 @@ async getArticleById(req, res) {
         id,
         updateData,
         { new: true, runValidators: true }
-      ).populate('author', 'username avatar');
+      ).populate('author', 'username avatar bio');
 
       res.json({
         success: true,
@@ -890,7 +919,7 @@ async getArticleById(req, res) {
       }
 
       const articles = await Article.find(query)
-        .populate('author', 'username avatar')
+        .populate('author', 'username avatar bio')
         .sort({ updatedAt: -1 })
         .skip(skip)
         .limit(limit)
@@ -947,7 +976,7 @@ async getArticleById(req, res) {
           publishedAt: new Date()
         },
         { new: true }
-      ).populate('author', 'username avatar');
+      ).populate('author', 'username avatar bio');
 
       res.json({
         success: true,
@@ -990,7 +1019,7 @@ async getArticleById(req, res) {
 
       // Get related articles, prioritizing those with same category and tags
       const relatedArticles = await Article.find(query)
-        .populate('author', 'username avatar')
+        .populate('author', 'username avatar bio')
         .sort({
           category: -1, // Prioritize same category
           trendingScore: -1, // Then by trending score
@@ -1067,7 +1096,7 @@ async getArticleById(req, res) {
         id,
         { author: newAuthorId },
         { new: true }
-      ).populate('author', 'username avatar');
+      ).populate('author', 'username avatar bio');
 
       res.json({
         success: true,

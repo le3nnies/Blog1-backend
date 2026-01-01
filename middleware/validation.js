@@ -33,6 +33,10 @@ const validateArticle = [
     .trim()
     .notEmpty()
     .withMessage('Slug is required'),
+  body('author')
+    .optional()
+    .isMongoId()
+    .withMessage('Author must be a valid ObjectId'),
   handleValidationErrors
 ];
 
@@ -61,6 +65,10 @@ const validateArticleUpdate = [
     .trim()
     .notEmpty()
     .withMessage('Slug is required'),
+  body('author')
+    .optional()
+    .isMongoId()
+    .withMessage('Author must be a valid ObjectId'),
   handleValidationErrors
 ];
 

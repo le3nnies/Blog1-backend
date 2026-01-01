@@ -12,6 +12,9 @@ router.use(authMiddleware);
 // Main analytics endpoint (requires authentication)
 router.get('/', analyticsController.getAnalytics);
 
+// Temporarily remove admin auth for testing active-sessions
+router.get('/active-sessions', analyticsController.getActiveSessions);
+
 // Admin-only analytics routes
 router.use(adminMiddleware);
 

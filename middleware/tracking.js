@@ -435,7 +435,7 @@ const trackPageView = async (req, res, next) => {
   try {
     console.log('🔍 TRACKING MIDDLEWARE CALLED:', req.method, req.path, req.headers.referer);
 
-    // Skip tracking for static assets, admin routes, and API routes (except specific page-view routes)
+    // Skip tracking for static assets and admin routes
     if (req.path.startsWith('/admin/') ||
         req.path.startsWith('/_next/') ||
         req.path.startsWith('/static/') ||
@@ -457,14 +457,10 @@ const trackPageView = async (req, res, next) => {
                            req.path === '/contact' ||
                            req.path === '/privacy' ||
                            req.path === '/terms' ||
-                           req.path === '/api/health'; // Health check
+                           req.path === '/newsletter' ||
+                           req.path === '/notfound'; // Health check removed to track all sessions
 
-    if (req.path.startsWith('/api/') && !isPageViewRoute) {
-      console.log('⏭️ Skipping tracking for non-page-view API route');
-      return next();
-    }
-
-    console.log('✅ Processing pageview tracking for:', req.path);
+    console.log('✅ Processing session tracking for:', req.path);
 
     // Extract common data
     const ipAddress = req.ip || req.connection.remoteAddress || 'unknown';
@@ -510,8 +506,7 @@ const trackPageView = async (req, res, next) => {
 
     if (session) {
       console.log('🔄 Extending existing session:', session.sessionId);
-      // Extend the session and increment page count
-      session.pageCount += 1;
+      // Extend the session (don't increment page count here - only for actual page views)
       await session.extendSession();
       sessionId = session.sessionId;
       console.log('💾 Session extended successfully');
@@ -608,107 +603,112 @@ const trackPageView = async (req, res, next) => {
       screenResolution = session.screenResolution;
     }
 
-    // Update previous page view's "Time on Page" and "Bounce" status
-    if (!isSessionNew && sessionId) {
-      try {
-        const lastPageView = await PageView.findOne({ sessionId }).sort({ createdAt: -1 });
+    // Only create PageView and update analytics for actual page views
+    if (isPageViewRoute) {
+      // Update previous page view's "Time on Page" and "Bounce" status
+      if (!isSessionNew && sessionId) {
+        try {
+          const lastPageView = await PageView.findOne({ sessionId }).sort({ createdAt: -1 });
 
-        if (lastPageView) {
-          // Calculate time spent on the previous page (in seconds)
-          const timeOnPage = (Date.now() - new Date(lastPageView.createdAt).getTime()) / 1000;
-          lastPageView.timeOnPage = timeOnPage;
-          lastPageView.isBounce = false; // User navigated to another page, so previous wasn't a bounce
-          await lastPageView.save();
-        }
-      } catch (err) {
-        console.error('⚠️ Error updating previous page view:', err);
-      }
-    }
-
-    // Extract article ID from URL if it's an article page
-    let articleId = null;
-    
-    // Handle frontend routes (e.g., /article/123) and API routes (e.g., /api/articles/123)
-    if (req.path.startsWith('/article/') || req.path.startsWith('/api/articles/')) {
-      const pathParts = req.path.split('/');
-      // Find the part that looks like an ID (Mongo ObjectId is 24 hex chars)
-      // or if your system uses numeric IDs, adjust regex accordingly.
-      // Assuming standard Mongo ObjectIds or numeric IDs at the end or before 'view'
-      
-      for (const part of pathParts) {
-        // Check for Mongo ObjectId (24 hex characters)
-        if (/^[0-9a-fA-F]{24}$/.test(part)) {
-          articleId = part;
-          break;
-        }
-        // Fallback for numeric IDs if used
-        if (/^\d+$/.test(part) && part.length > 5) { // Simple heuristic
-          articleId = part;
-          break;
+          if (lastPageView) {
+            // Calculate time spent on the previous page (in seconds)
+            const timeOnPage = (Date.now() - new Date(lastPageView.createdAt).getTime()) / 1000;
+            lastPageView.timeOnPage = timeOnPage;
+            lastPageView.isBounce = false; // User navigated to another page, so previous wasn't a bounce
+            await lastPageView.save();
+          }
+        } catch (err) {
+          console.error('⚠️ Error updating previous page view:', err);
         }
       }
-    }
 
-    // Create PageView record for analytics
-    try {
-      const pageView = new PageView({
-        sessionId,
-        userId: null, // Will be set by auth middleware if user is logged in
-        articleId,
-        pageUrl: req.originalUrl || req.url,
-        pageTitle: null, // Will be set by frontend if available
-        referrer: req.headers.referer || null,
-        source,
-        medium,
-        campaign: utmData.campaign,
-        content: utmData.content,
-        term: utmData.term,
-        ipAddress: req.ip || req.connection.remoteAddress || 'unknown',
-        userAgent: req.headers['user-agent'] || 'unknown',
-        country: locationData.country,
-        city: locationData.city,
-        region: locationData.region,
-        deviceType: deviceInfo.deviceType,
-        deviceCategory: deviceInfo.deviceCategory,
-        browser: deviceInfo.browser,
-        os: deviceInfo.os,
-        screenResolution,
-        language: req.headers['accept-language'] || null,
-        timezone: null, // Will be set by frontend if available
-        timeOnPage: 0,
-        isBounce: isSessionNew, // Only true if it's the start of a session
-        isNewSession: isSessionNew,
-        createdAt: new Date()
-      });
+      // Extract article ID from URL if it's an article page
+      let articleId = null;
 
-      await pageView.save();
-      console.log('📄 PageView saved successfully');
+      // Handle frontend routes (e.g., /article/123) and API routes (e.g., /api/articles/123)
+      if (req.path.startsWith('/article/') || req.path.startsWith('/api/articles/')) {
+        const pathParts = req.path.split('/');
+        // Find the part that looks like an ID (Mongo ObjectId is 24 hex chars)
+        // or if your system uses numeric IDs, adjust regex accordingly.
+        // Assuming standard Mongo ObjectIds or numeric IDs at the end or before 'view'
 
-      // Increment article view count if this is an article page
-      if (articleId && !isInteractionRoute) {
-        // Google-like logic: Only increment view count if unique for this session
-        // This prevents F5/refresh spam from inflating views
-        const hasViewedInSession = await PageView.exists({
-          sessionId,
-          articleId,
-          _id: { $ne: pageView._id } // Exclude the current pageview we just created
-        });
-
-        if (!hasViewedInSession) {
-          try {
-            await Article.findByIdAndUpdate(articleId, {
-              $inc: { views: 1 },
-              $set: { lastViewedAt: new Date() }
-            });
-            console.log(`📈 Article ${articleId} view count incremented (Unique Session View)`);
-          } catch (articleError) {
-            console.error('⚠️ Error updating article view count:', articleError);
+        for (const part of pathParts) {
+          // Check for Mongo ObjectId (24 hex characters)
+          if (/^[0-9a-fA-F]{24}$/.test(part)) {
+            articleId = part;
+            break;
+          }
+          // Fallback for numeric IDs if used
+          if (/^\d+$/.test(part) && part.length > 5) { // Simple heuristic
+            articleId = part;
+            break;
           }
         }
       }
-    } catch (pageViewError) {
-      console.error('PageView creation error:', pageViewError);
-      // Don't fail the request if PageView creation fails
+
+      // Create PageView record for analytics
+      try {
+        const pageView = new PageView({
+          sessionId,
+          userId: null, // Will be set by auth middleware if user is logged in
+          articleId,
+          pageUrl: req.originalUrl || req.url,
+          pageTitle: null, // Will be set by frontend if available
+          referrer: req.headers.referer || null,
+          source,
+          medium,
+          campaign: utmData.campaign,
+          content: utmData.content,
+          term: utmData.term,
+          ipAddress: req.ip || req.connection.remoteAddress || 'unknown',
+          userAgent: req.headers['user-agent'] || 'unknown',
+          country: locationData.country,
+          city: locationData.city,
+          region: locationData.region,
+          deviceType: deviceInfo.deviceType,
+          deviceCategory: deviceInfo.deviceCategory,
+          browser: deviceInfo.browser,
+          os: deviceInfo.os,
+          screenResolution,
+          language: req.headers['accept-language'] || null,
+          timezone: null, // Will be set by frontend if available
+          timeOnPage: 0,
+          isBounce: isSessionNew, // Only true if it's the start of a session
+          isNewSession: isSessionNew,
+          createdAt: new Date()
+        });
+
+        await pageView.save();
+        console.log('📄 PageView saved successfully');
+
+        // Increment article view count if this is an article page
+        if (articleId && !isInteractionRoute) {
+          // Google-like logic: Only increment view count if unique for this session
+          // This prevents F5/refresh spam from inflating views
+          const hasViewedInSession = await PageView.exists({
+            sessionId,
+            articleId,
+            _id: { $ne: pageView._id } // Exclude the current pageview we just created
+          });
+
+          if (!hasViewedInSession) {
+            try {
+              await Article.findByIdAndUpdate(articleId, {
+                $inc: { views: 1 },
+                $set: { lastViewedAt: new Date() }
+              });
+              console.log(`📈 Article ${articleId} view count incremented (Unique Session View)`);
+            } catch (articleError) {
+              console.error('⚠️ Error updating article view count:', articleError);
+            }
+          }
+        }
+      } catch (pageViewError) {
+        console.error('PageView creation error:', pageViewError);
+        // Don't fail the request if PageView creation fails
+      }
+    } else {
+      console.log('⏭️ Session extended without creating pageview (not a page view route)');
     }
 
     // Set session cookie
