@@ -73,7 +73,7 @@ if (process.env.NODE_ENV === 'production') {
   };
 } else {
   // In development, allow localhost
-  corsOptions.origin = 'https://blog1-frontend.onrender.com';
+  corsOptions.origin = 'https://blog1-frontend.vercel.app';
 }
 
 app.use(cors(corsOptions));
