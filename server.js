@@ -61,7 +61,7 @@ if (process.env.NODE_ENV === 'production') {
 
     const allowedOrigins = [
       process.env.FRONTEND_URL,
-      'https://blog1-frontend.onrender.com', // Your actual frontend URL      
+      'https://blog1-frontend.vercel.app', // Your actual frontend URL      
     ].filter(Boolean); // Remove undefined values
 
     if (allowedOrigins.includes(origin)) {
