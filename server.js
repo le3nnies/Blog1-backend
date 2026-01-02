@@ -49,10 +49,37 @@ app.use(helmet({
 }));
 
 // CORS configuration
-app.use(cors({
-  origin: process.env.FRONTEND_URL || 'http://localhost:8080',
+const corsOptions = {
   credentials: true
-}));
+};
+
+if (process.env.NODE_ENV === 'production') {
+  // In production, allow the specific frontend URL and common development URLs
+  corsOptions.origin = function (origin, callback) {
+    // Allow requests with no origin (like mobile apps or curl requests)
+    if (!origin) return callback(null, true);
+
+    const allowedOrigins = [
+      process.env.FRONTEND_URL,
+      'https://blog1-frontend.onrender.com', // Your actual frontend URL
+      'https://blog1-frontend.onrender.com/', // With trailing slash
+      'http://localhost:8080', // Development
+      'http://localhost:3000', // Alternative development port
+    ].filter(Boolean); // Remove undefined values
+
+    if (allowedOrigins.includes(origin)) {
+      return callback(null, true);
+    }
+
+    console.log('CORS blocked origin:', origin);
+    return callback(new Error('Not allowed by CORS'));
+  };
+} else {
+  // In development, allow localhost
+  corsOptions.origin = 'http://localhost:8080';
+}
+
+app.use(cors(corsOptions));
 
 // Rate limiting
 const limiter = rateLimit({
