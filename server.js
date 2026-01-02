@@ -61,10 +61,7 @@ if (process.env.NODE_ENV === 'production') {
 
     const allowedOrigins = [
       process.env.FRONTEND_URL,
-      'https://blog1-frontend.onrender.com', // Your actual frontend URL
-      'https://blog1-frontend.onrender.com/', // With trailing slash
-      'http://localhost:8080', // Development
-      'http://localhost:3000', // Alternative development port
+      'https://blog1-frontend.onrender.com', // Your actual frontend URL      
     ].filter(Boolean); // Remove undefined values
 
     if (allowedOrigins.includes(origin)) {
@@ -76,7 +73,7 @@ if (process.env.NODE_ENV === 'production') {
   };
 } else {
   // In development, allow localhost
-  corsOptions.origin = 'http://localhost:8080';
+  corsOptions.origin = 'https://blog1-frontend.onrender.com';
 }
 
 app.use(cors(corsOptions));
