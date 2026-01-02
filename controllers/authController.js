@@ -48,7 +48,7 @@ class AuthController {
       res.cookie('authToken', token, {
         httpOnly: true,
         secure: process.env.NODE_ENV === 'production', // Use HTTPS in production
-        sameSite: 'strict',
+        sameSite: process.env.NODE_ENV === 'production' ? 'none' : 'strict', // Allow cross-origin in production
         maxAge: 7 * 24 * 60 * 60 * 1000 // 7 days
       });
 
@@ -132,7 +132,7 @@ async login(req, res) {
     res.cookie('authToken', token, {
       httpOnly: true,
       secure: process.env.NODE_ENV === 'production', // Use HTTPS in production
-      sameSite: 'strict',
+      sameSite: process.env.NODE_ENV === 'production' ? 'none' : 'strict', // Allow cross-origin in production
       maxAge: 7 * 24 * 60 * 60 * 1000 // 7 days
     });
 
@@ -338,7 +338,7 @@ async createAdmin(req, res) {
       res.clearCookie('authToken', {
         httpOnly: true,
         secure: process.env.NODE_ENV === 'production',
-        sameSite: 'strict'
+        sameSite: process.env.NODE_ENV === 'production' ? 'none' : 'strict'
       });
 
       res.json({
