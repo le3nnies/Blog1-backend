@@ -4,8 +4,21 @@ const Session = require('../models/Session');
 const { v4: uuidv4 } = require('uuid');  
 const bcrypt = require('bcryptjs');  
   
-class AuthController {  
-  // User registration  
+class AuthController {
+  constructor() {
+    this.register = this.register.bind(this);
+    this.login = this.login.bind(this);
+    this.createAdmin = this.createAdmin.bind(this);
+    this.getCurrentUser = this.getCurrentUser.bind(this);
+    this.updateProfile = this.updateProfile.bind(this);
+    this.changePassword = this.changePassword.bind(this);
+    this.logout = this.logout.bind(this);
+    this._createSession = this._createSession.bind(this);
+    this._extractDeviceInfo = this._extractDeviceInfo.bind(this);
+    this._extractLocationInfo = this._extractLocationInfo.bind(this);
+  }
+
+  // User registration
   async register(req, res) {  
     try {  
       const { username, email, password, role, bio } = req.body;  
@@ -347,69 +360,69 @@ class AuthController {
     }  
   }  
   
-  // Helper method to create session with device info  
-  async _createSession(sessionId, userId, req) {  
-    const deviceInfo = this._extractDeviceInfo(req);  
-    const locationInfo = this._extractLocationInfo(req);  
-      
-    await Session.create({  
-      sessionId,  
-      userId,  
-      ...deviceInfo,  
-      ...locationInfo,  
-      startTime: new Date(),  
-      endTime: new Date(),  
-      isActive: true  
-    });  
-  }  
-  
-  // Helper method to extract device information  
-  _extractDeviceInfo(req) {  
-    const userAgent = req.headers['user-agent'] || '';  
-      
-    // Simple device detection (you can use a library like 'ua-parser-js' for better detection)  
-    const isMobile = /Mobile|Android|iPhone|iPad/.test(userAgent);  
-    const isTablet = /iPad|Tablet/.test(userAgent);  
-      
-    let deviceType = 'desktop';  
-    if (isTablet) deviceType = 'tablet';  
-    else if (isMobile) deviceType = 'mobile';  
-  
-    // Extract browser info (basic implementation)  
-    let browser = 'Unknown';  
-    let os = 'Unknown';  
-      
-    if (userAgent.includes('Chrome')) browser = 'Chrome';  
-    else if (userAgent.includes('Firefox')) browser = 'Firefox';  
-    else if (userAgent.includes('Safari')) browser = 'Safari';  
-      
-    if (userAgent.includes('Windows')) os = 'Windows';  
-    else if (userAgent.includes('Mac')) os = 'macOS';  
-    else if (userAgent.includes('Linux')) os = 'Linux';  
-    else if (userAgent.includes('Android')) os = 'Android';  
-    else if (userAgent.includes('iOS')) os = 'iOS';  
-  
-    return {  
-      userAgent,  
-      deviceType,  
-      browser,  
-      os,  
-      ipAddress: req.ip || req.connection.remoteAddress,  
-      referrer: req.headers.referer || 'direct'  
-    };  
-  }  
-  
-  // Helper method to extract location (basic implementation)  
-  _extractLocationInfo(req) {  
-    // In production, you'd use a GeoIP service  
-    return {  
-      country: 'Unknown',  
-      countryCode: 'Unknown',  
-      city: 'Unknown',  
-      region: 'Unknown',  
-      continent: 'Unknown'  
-    };  
-  }  
+  // Helper method to create session with device info
+  _createSession = async (sessionId, userId, req) => {
+    const deviceInfo = this._extractDeviceInfo(req);
+    const locationInfo = this._extractLocationInfo(req);
+
+    await Session.create({
+      sessionId,
+      userId,
+      ...deviceInfo,
+      ...locationInfo,
+      startTime: new Date(),
+      endTime: new Date(),
+      isActive: true
+    });
+  }
+
+  // Helper method to extract device information
+  _extractDeviceInfo = (req) => {
+    const userAgent = req.headers['user-agent'] || '';
+
+    // Simple device detection (you can use a library like 'ua-parser-js' for better detection)
+    const isMobile = /Mobile|Android|iPhone|iPad/.test(userAgent);
+    const isTablet = /iPad|Tablet/.test(userAgent);
+
+    let deviceType = 'desktop';
+    if (isTablet) deviceType = 'tablet';
+    else if (isMobile) deviceType = 'mobile';
+
+    // Extract browser info (basic implementation)
+    let browser = 'Unknown';
+    let os = 'Unknown';
+
+    if (userAgent.includes('Chrome')) browser = 'Chrome';
+    else if (userAgent.includes('Firefox')) browser = 'Firefox';
+    else if (userAgent.includes('Safari')) browser = 'Safari';
+
+    if (userAgent.includes('Windows')) os = 'Windows';
+    else if (userAgent.includes('Mac')) os = 'macOS';
+    else if (userAgent.includes('Linux')) os = 'Linux';
+    else if (userAgent.includes('Android')) os = 'Android';
+    else if (userAgent.includes('iOS')) os = 'iOS';
+
+    return {
+      userAgent,
+      deviceType,
+      browser,
+      os,
+      ipAddress: req.ip || req.connection.remoteAddress,
+      referrer: req.headers.referer || 'direct'
+    };
+  }
+
+  // Helper method to extract location (basic implementation)
+  _extractLocationInfo = (req) => {
+    // In production, you'd use a GeoIP service
+    return {
+      country: 'Unknown',
+      countryCode: 'Unknown',
+      city: 'Unknown',
+      region: 'Unknown',
+      continent: 'Unknown'
+    };
+  }
 }  
   
 module.exports = new AuthController();
