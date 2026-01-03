@@ -1,5 +1,7 @@
 const jwt = require('jsonwebtoken');  
 const User = require('../models/User');  
+const Session = require('../models/Session');  
+const { v4: uuidv4 } = require('uuid');  
 const bcrypt = require('bcryptjs');  
   
 class AuthController {  
@@ -33,20 +35,28 @@ class AuthController {
   
       await user.save();  
   
-      const token = user.generateToken();  
+      // Create session for new user (auto-login after registration)  
+      const sessionId = `sess_${uuidv4()}_${Date.now()}`;  
+      await this._createSession(sessionId, user._id, req);  
   
-      // Set HTTP-only cookie with the token - FIXED: Use production settings  
-      res.cookie('authToken', token, {  
+      // Set session cookie  
+      res.cookie('session_id', sessionId, {  
         httpOnly: true,  
-        secure: process.env.NODE_ENV === 'production', // Fixed: was 'development'  
-        sameSite: process.env.NODE_ENV === 'production' ? 'none' : 'strict', // Fixed: was inverted  
-        maxAge: 7 * 24 * 60 * 60 * 1000 // 7 days  
+        secure: process.env.NODE_ENV === 'production',  
+        sameSite: process.env.NODE_ENV === 'production' ? 'none' : 'strict',  
+        maxAge: 30 * 24 * 60 * 60 * 1000 // 30 days  
       });  
   
       res.status(201).json({  
         success: true,  
         data: {  
-          user  
+          user: {  
+            id: user._id,  
+            username: user.username,  
+            email: user.email,  
+            role: user.role,  
+            bio: user.bio  
+          }  
         }  
       });  
     } catch (error) {  
@@ -94,35 +104,20 @@ class AuthController {
         });  
       }  
   
-      console.log('Password valid, generating token...');  
+      console.log('Password valid, creating session...');  
   
-      // Use the User model's generateToken method OR generate directly  
-      let token;  
-      try {  
-        // Try using the model method first  
-        token = user.generateToken();  
-      } catch (modelError) {  
-        console.log('Model token method failed, using direct method');  
-        // Fallback: generate token directly  
-        token = jwt.sign(  
-          {   
-            userId: user._id.toString(),  
-            email: user.email,  
-            role: user.role   
-          },  
-          process.env.JWT_SECRET || 'fallback-secret-key-for-development',  
-          { expiresIn: process.env.JWT_EXPIRE || '7d' }  
-        );  
-      }  
+      // Create session instead of JWT token  
+      const sessionId = `sess_${uuidv4()}_${Date.now()}`;  
+      await this._createSession(sessionId, user._id, req);  
   
-      console.log('Token generated successfully');  
+      console.log('Session created successfully');  
   
-      // Set HTTP-only cookie with the token  
-      res.cookie('authToken', token, {  
+      // Set session cookie  
+      res.cookie('session_id', sessionId, {  
         httpOnly: true,  
-        secure: process.env.NODE_ENV === 'production', // Use HTTPS in production  
-        sameSite: process.env.NODE_ENV === 'production' ? 'none' : 'strict', // Allow cross-origin in production  
-        maxAge: 7 * 24 * 60 * 60 * 1000 // 7 days  
+        secure: process.env.NODE_ENV === 'production',  
+        sameSite: process.env.NODE_ENV === 'production' ? 'none' : 'strict',  
+        maxAge: 30 * 24 * 60 * 60 * 1000 // 30 days  
       });  
   
       // Return user info without password  
@@ -320,11 +315,20 @@ class AuthController {
     }  
   }  
   
-  // Logout - clear HTTP-only cookie  
+  // Logout - clear session  
   async logout(req, res) {  
     try {  
-      // Clear the auth token cookie  
-      res.clearCookie('authToken', {  
+      // Get session ID from cookie  
+      const sessionId = req.cookies?.session_id;  
+        
+      if (sessionId) {  
+        // Delete session from database  
+        await Session.deleteOne({ sessionId });  
+        console.log('Session deleted:', sessionId);  
+      }  
+  
+      // Clear the session cookie  
+      res.clearCookie('session_id', {  
         httpOnly: true,  
         secure: process.env.NODE_ENV === 'production',  
         sameSite: process.env.NODE_ENV === 'production' ? 'none' : 'strict'  
@@ -341,6 +345,70 @@ class AuthController {
         error: 'Failed to logout'  
       });  
     }  
+  }  
+  
+  // Helper method to create session with device info  
+  async _createSession(sessionId, userId, req) {  
+    const deviceInfo = this._extractDeviceInfo(req);  
+    const locationInfo = this._extractLocationInfo(req);  
+      
+    await Session.create({  
+      sessionId,  
+      userId,  
+      ...deviceInfo,  
+      ...locationInfo,  
+      startTime: new Date(),  
+      endTime: new Date(),  
+      isActive: true  
+    });  
+  }  
+  
+  // Helper method to extract device information  
+  _extractDeviceInfo(req) {  
+    const userAgent = req.headers['user-agent'] || '';  
+      
+    // Simple device detection (you can use a library like 'ua-parser-js' for better detection)  
+    const isMobile = /Mobile|Android|iPhone|iPad/.test(userAgent);  
+    const isTablet = /iPad|Tablet/.test(userAgent);  
+      
+    let deviceType = 'desktop';  
+    if (isTablet) deviceType = 'tablet';  
+    else if (isMobile) deviceType = 'mobile';  
+  
+    // Extract browser info (basic implementation)  
+    let browser = 'Unknown';  
+    let os = 'Unknown';  
+      
+    if (userAgent.includes('Chrome')) browser = 'Chrome';  
+    else if (userAgent.includes('Firefox')) browser = 'Firefox';  
+    else if (userAgent.includes('Safari')) browser = 'Safari';  
+      
+    if (userAgent.includes('Windows')) os = 'Windows';  
+    else if (userAgent.includes('Mac')) os = 'macOS';  
+    else if (userAgent.includes('Linux')) os = 'Linux';  
+    else if (userAgent.includes('Android')) os = 'Android';  
+    else if (userAgent.includes('iOS')) os = 'iOS';  
+  
+    return {  
+      userAgent,  
+      deviceType,  
+      browser,  
+      os,  
+      ipAddress: req.ip || req.connection.remoteAddress,  
+      referrer: req.headers.referer || 'direct'  
+    };  
+  }  
+  
+  // Helper method to extract location (basic implementation)  
+  _extractLocationInfo(req) {  
+    // In production, you'd use a GeoIP service  
+    return {  
+      country: 'Unknown',  
+      countryCode: 'Unknown',  
+      city: 'Unknown',  
+      region: 'Unknown',  
+      continent: 'Unknown'  
+    };  
   }  
 }  
   
