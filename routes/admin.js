@@ -9,7 +9,7 @@ const adminController = require('../controllers/adminController'); // Add this l
 const { authMiddleware, adminMiddleware } = require('../middleware/auth');
 
 // Apply admin middleware to all routes
-router.use(authMiddleware, adminMiddleware);
+//router.use(authMiddleware, adminMiddleware);
 
 // User Management Routes
 router.get('/users', userController.getAllUsers);
