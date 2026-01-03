@@ -7,7 +7,7 @@ const fs = require('fs');
 const mongoose = require('mongoose');
 
 // Import the specific auth middleware function
-//const { authMiddleware, adminMiddleware } = require('../middleware/auth');
+const { authMiddleware, adminMiddleware } = require('../middleware/auth');
 
 // Import models
 const AdCampaign = require('../models/AdCampaign');
