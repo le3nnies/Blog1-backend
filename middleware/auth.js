@@ -1,17 +1,17 @@
 const jwt = require('jsonwebtoken');  
 const User = require('../models/User');  
+const Session = require('../models/Session');  
   
-// Session store - you'll need to implement this based on your setup  
-// This could be Redis, MongoDB, or in-memory store  
+// Session store lookup using MongoDB Session model  
 const getSessionFromStore = async (sessionId) => {  
-  // Example implementation - adjust based on your session storage  
-  try {     
-     const Session = require('../models/Session');  
-     return await Session.findOne({ sessionId });  
+  try {  
+    const session = await Session.findOne({   
+      sessionId,   
+      isActive: true   
+    });  
       
-    // For now, return null - you need to implement your session store lookup  
     console.log('Looking up session:', sessionId);  
-    return null;  
+    return session;  
   } catch (error) {  
     console.error('Session lookup error:', error);  
     return null;  
@@ -31,7 +31,7 @@ exports.authMiddleware = async (req, res, next) => {
   }  
     
   try {  
-    // Look up session in session store (NOT verify as JWT)  
+    // Look up session in MongoDB  
     const session = await getSessionFromStore(sessionId);  
       
     if (!session || !session.userId) {  
@@ -39,6 +39,19 @@ exports.authMiddleware = async (req, res, next) => {
         success: false,  
         error: 'Invalid or expired session'  
       });  
+    }  
+      
+    // Check if session is still active (within timeout window)  
+    if (!session.isSessionActive()) {  
+      return res.status(401).json({  
+        success: false,  
+        error: 'Session expired due to inactivity'  
+      });  
+    }  
+      
+    // Extend session on activity if configured  
+    if (session.extendOnActivity !== false) {  
+      await session.extendSession();  
     }  
       
     // Get user from session data  
@@ -50,6 +63,9 @@ exports.authMiddleware = async (req, res, next) => {
         error: 'User not found'  
       });  
     }  
+      
+    // Attach session to request for analytics tracking  
+    req.session = session;  
       
     next();  
   } catch (error) {  
