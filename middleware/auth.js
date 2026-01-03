@@ -3,7 +3,7 @@ const User = require('../models/User');
   
 exports.authMiddleware = async (req, res, next) => {  
   // Only check for token in cookies (no Authorization header fallback)  
-  const token = req.cookies && req.cookies.authToken;  
+  const token = req.cookies && req.cookies.session_id;  
   
   // If no token found  
   if (!token) {  
