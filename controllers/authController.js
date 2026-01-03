@@ -47,8 +47,8 @@ class AuthController {
       // Set HTTP-only cookie with the token
       res.cookie('authToken', token, {
         httpOnly: true,
-        secure: process.env.NODE_ENV === 'production', // Use HTTPS in production
-        sameSite: process.env.NODE_ENV === 'production' ? 'none' : 'strict', // Allow cross-origin in production
+        secure: process.env.NODE_ENV === 'development', // Use HTTPS in production
+        sameSite: process.env.NODE_ENV === 'development' ? 'none' : 'strict', // Allow cross-origin in production
         maxAge: 7 * 24 * 60 * 60 * 1000 // 7 days
       });
 
