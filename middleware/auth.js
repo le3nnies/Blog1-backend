@@ -1,31 +1,59 @@
 const jwt = require('jsonwebtoken');  
 const User = require('../models/User');  
   
-exports.authMiddleware = async (req, res, next) => {  
-  // Only check for token in cookies (no Authorization header fallback)  
-  const token = req.cookies && req.cookies.session_id;  
+// Session store - you'll need to implement this based on your setup  
+// This could be Redis, MongoDB, or in-memory store  
+const getSessionFromStore = async (sessionId) => {  
+  // Example implementation - adjust based on your session storage  
+  try {     
+     const Session = require('../models/Session');  
+     return await Session.findOne({ sessionId });  
+      
+    // For now, return null - you need to implement your session store lookup  
+    console.log('Looking up session:', sessionId);  
+    return null;  
+  } catch (error) {  
+    console.error('Session lookup error:', error);  
+    return null;  
+  }  
+};  
   
-  // If no token found  
-  if (!token) {  
+exports.authMiddleware = async (req, res, next) => {  
+  // Check for session_id cookie  
+  const sessionId = req.cookies && req.cookies.session_id;  
+    
+  // If no session found  
+  if (!sessionId) {  
     return res.status(401).json({  
       success: false,  
       error: 'Not authorized to access this route'  
     });  
   }  
-  
+    
   try {  
-    const decoded = jwt.verify(token, process.env.JWT_SECRET);  
-    req.user = await User.findById(decoded.userId);  
-  
+    // Look up session in session store (NOT verify as JWT)  
+    const session = await getSessionFromStore(sessionId);  
+      
+    if (!session || !session.userId) {  
+      return res.status(401).json({  
+        success: false,  
+        error: 'Invalid or expired session'  
+      });  
+    }  
+      
+    // Get user from session data  
+    req.user = await User.findById(session.userId);  
+      
     if (!req.user) {  
       return res.status(401).json({  
         success: false,  
         error: 'User not found'  
       });  
     }  
-  
+      
     next();  
   } catch (error) {  
+    console.error('Auth middleware error:', error);  
     return res.status(401).json({  
       success: false,  
       error: 'Not authorized to access this route'  
@@ -42,7 +70,7 @@ exports.adminMiddleware = (req, res, next) => {
     hasUser: !!req.user,  
     isAdmin: req.user?.role === 'admin'  
   });  
-  
+    
   if (req.user && req.user.role === 'admin') {  
     next();  
   } else {  
