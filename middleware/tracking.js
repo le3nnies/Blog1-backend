@@ -9,8 +9,8 @@ const Article = require('../models/Article');
 
 // Session configuration constants
 const SESSION_CONFIG = {
-  inactivityTimeout: 30 * 60 * 1000, // 30 minutes of inactivity
-  maxSessionDuration: 4 * 60 * 60 * 1000, // 4 hours absolute maximum
+  inactivityTimeout: 2 * 60 * 60 * 1000, // 2 hours of inactivity
+  maxSessionDuration: 8 * 60 * 60 * 1000, // 8 hours absolute maximum
   cookieExpiration: 30 * 24 * 60 * 60 * 1000, // 30 days
   extendOnActivity: true // Extend session on any interaction
 };
@@ -715,8 +715,8 @@ const trackPageView = async (req, res, next) => {
     res.cookie('session_id', sessionId, {
       maxAge: 30 * 24 * 60 * 60 * 1000,
       httpOnly: true,
-      secure: false, // Allow on localhost
-      sameSite: 'lax'
+      secure: process.env.NODE_ENV === 'production',
+      sameSite: process.env.NODE_ENV === 'production' ? 'none' : 'lax'
     });
 
     return next();
