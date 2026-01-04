@@ -131,7 +131,7 @@ class AuthController {
         // Update existing session with userId
         console.log('Updating existing session with userId');
         session.userId = user._id;
-        session.endTime = new Date();
+        session.isActive = true;
         await session.save();
       } else {
         // Create new session for login
