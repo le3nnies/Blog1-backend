@@ -117,21 +117,36 @@ class AuthController {
         });  
       }  
   
-      console.log('Password valid, creating session...');  
-  
-      // Create session instead of JWT token  
-      const sessionId = `sess_${uuidv4()}_${Date.now()}`;  
-      await this._createSession(sessionId, user._id, req);  
-  
-      console.log('Session created successfully');  
-  
-      // Set session cookie  
-      res.cookie('session_id', sessionId, {  
-        httpOnly: true,  
-        secure: process.env.NODE_ENV === 'production',  
-        sameSite: process.env.NODE_ENV === 'production' ? 'none' : 'strict',  
-        maxAge: 30 * 24 * 60 * 60 * 1000 // 30 days  
-      });  
+      console.log('Password valid, updating or creating session...');
+
+      // Check if user already has an active session from tracking
+      let sessionId = req.cookies?.session_id;
+      let session = null;
+
+      if (sessionId) {
+        session = await Session.findOne({ sessionId, isActive: true });
+      }
+
+      if (session) {
+        // Update existing session with userId
+        console.log('Updating existing session with userId');
+        session.userId = user._id;
+        session.endTime = new Date();
+        await session.save();
+      } else {
+        // Create new session for login
+        sessionId = `sess_${uuidv4()}_${Date.now()}`;
+        await this._createSession(sessionId, user._id, req);
+        console.log('New session created for login');
+      }
+
+      // Set session cookie
+      res.cookie('session_id', sessionId, {
+        httpOnly: true,
+        secure: process.env.NODE_ENV === 'production',
+        sameSite: process.env.NODE_ENV === 'production' ? 'none' : 'strict',
+        maxAge: 30 * 24 * 60 * 60 * 1000 // 30 days
+      });
   
       // Return user info without password  
       const userResponse = user.toJSON ? user.toJSON() : {  
