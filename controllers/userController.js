@@ -182,8 +182,8 @@ class UserController {
       }
 
       const updateData = {};
-      if (username) updateData.username = username;
-      if (email) updateData.email = email;
+      if (username !== undefined) updateData.username = username;
+      if (email !== undefined) updateData.email = email;
       if (bio !== undefined) updateData.bio = bio;
       if (avatar) updateData.avatar = avatar;
       if (isActive !== undefined) updateData.isActive = isActive;
