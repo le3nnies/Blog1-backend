@@ -14,10 +14,10 @@ const { authMiddleware, adminMiddleware } = require('../middleware/auth');
 // User Management Routes
 router.get('/users', userController.getAllUsers);
 router.get('/users/:id', userController.getUserById);
-router.put('/users/:id', userController.updateUser);
-router.put('/users/:id/role', userController.updateUserRole);
+router.put('/users/:id/role', authMiddleware, adminMiddleware, userController.updateUserRole);  
+router.put('/users/:id', authMiddleware, adminMiddleware, userController.updateUser);  
+router.delete('/users/:id', authMiddleware, adminMiddleware, userController.deleteUser);
 router.put('/users/:id/status', userController.updateUserStatus);
-router.delete('/users/:id', userController.deleteUser);
 router.get('/users/:id/articles', userController.getUserArticles);
 
 // Article Management Routes
