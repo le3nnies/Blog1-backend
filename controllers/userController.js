@@ -228,6 +228,14 @@ class UserController {
         });
       }
 
+      // Check if req.user exists
+      if (!req.user || !req.user._id) {
+        return res.status(401).json({
+          success: false,
+          error: 'Authentication required'
+        });
+      }
+
       // Prevent changing own role
       if (id === req.user._id.toString()) {
         return res.status(400).json({
@@ -269,6 +277,14 @@ class UserController {
       const { id } = req.params;
       const { isActive } = req.body;
 
+      // Check if req.user exists
+      if (!req.user || !req.user._id) {
+        return res.status(401).json({
+          success: false,
+          error: 'Authentication required'
+        });
+      }
+
       // Prevent deactivating own account
       if (id === req.user._id.toString() && !isActive) {
         return res.status(400).json({
@@ -308,6 +324,14 @@ class UserController {
   async deleteUser(req, res) {
     try {
       const { id } = req.params;
+
+      // Check if req.user exists
+      if (!req.user || !req.user._id) {
+        return res.status(401).json({
+          success: false,
+          error: 'Authentication required'
+        });
+      }
 
       // Prevent deleting own account
       if (id === req.user._id.toString()) {
@@ -477,6 +501,14 @@ class UserController {
   async createBackup(req, res) {
     try {
       const { type = 'metadata' } = req.body; // metadata, full
+
+      // Check if req.user exists
+      if (!req.user || !req.user.username) {
+        return res.status(401).json({
+          success: false,
+          error: 'Authentication required'
+        });
+      }
 
       // In a real implementation, this would connect to your backup service
       // For now, we'll return a mock response
