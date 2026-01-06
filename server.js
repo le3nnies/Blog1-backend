@@ -34,7 +34,7 @@ const userRoutes = require('./routes/users');
 const secureAdminRoutes = require('./routes/secureAdmin');
 
 // Import unified session middleware
-const trackPageView = require('./middleware/tracking'); // This now creates tracking sessions only
+const { trackPageView } = require('./middleware/tracking'); // This now creates tracking sessions only
 const { authMiddleware, adminMiddleware, optionalAuthMiddleware } = require('./middleware/auth');
 const { COOKIE_NAMES } = require('./middleware/auth');
 
