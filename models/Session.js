@@ -117,6 +117,17 @@ sessionSchema.index({ convertedAt: 1, userId: 1 });
 
 // Existing pre-save middleware remains...
 
+// NEW: Check if session is valid and active
+sessionSchema.methods.isSessionActive = function() {
+  const now = Date.now();
+  const lastActive = this.endTime.getTime();
+  const startTime = this.startTime.getTime();
+
+  return this.isActive &&
+    (now - lastActive <= SESSION_CONFIG.inactivityTimeout) &&
+    (now - startTime <= SESSION_CONFIG.maxSessionDuration);
+};
+
 // NEW: Method to convert tracking session to auth session
 sessionSchema.methods.convertToAuthSession = function(userId) {
   this.userId = userId;
@@ -124,6 +135,30 @@ sessionSchema.methods.convertToAuthSession = function(userId) {
   this.isAuthenticated = true;
   this.convertedAt = new Date();
   return this.save();
+};
+
+// NEW: Static method to check if visitor is new
+sessionSchema.statics.isNewVisitor = async function(ipAddress) {
+  if (!ipAddress) return false;
+  const count = await this.countDocuments({ ipAddress });
+  return count === 0;
+};
+
+// NEW: Static method to cleanup expired sessions
+sessionSchema.statics.cleanupExpiredSessions = async function() {
+  const now = new Date();
+  const inactivityThreshold = new Date(now - SESSION_CONFIG.inactivityTimeout);
+  const maxDurationThreshold = new Date(now - SESSION_CONFIG.maxSessionDuration);
+
+  return this.updateMany({
+    isActive: true,
+    $or: [
+      { endTime: { $lt: inactivityThreshold } },
+      { startTime: { $lt: maxDurationThreshold } }
+    ]
+  }, {
+    $set: { isActive: false }
+  });
 };
 
 // Update the findActiveSession method to consider session type
