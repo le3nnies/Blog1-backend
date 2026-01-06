@@ -414,18 +414,27 @@ exports.validateSessionForSocket = async (sessionId) => {
 exports.cleanupExpiredSessions = async () => {
   try {
     const cutoffTime = new Date(Date.now() - SESSION_CONFIG.inactivityTimeout);
-    
+
     const result = await Session.updateMany(
       {
         isActive: true,
         endTime: { $lt: cutoffTime }
       },
-      {
-        isActive: false,
-        duration: { $round: [{ $subtract: ['$endTime', '$startTime'] }, 1000] }
-      }
+      [
+        {
+          $set: {
+            isActive: false,
+            duration: {
+              $round: [
+                { $divide: [{ $subtract: ['$endTime', '$startTime'] }, 1000] },
+                0
+              ]
+            }
+          }
+        }
+      ]
     );
-    
+
     console.log(`Cleaned up ${result.modifiedCount} expired sessions`);
     return result.modifiedCount;
   } catch (error) {
