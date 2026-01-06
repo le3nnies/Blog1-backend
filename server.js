@@ -19,6 +19,7 @@ const sslConfig = require('./utils/ssl');
 const URLSecurity = require('./middleware/urlSecurity');
 
 const app = express();
+app.set('trust proxy', true);
 //const cron = require('node-cron');
 //const path = require('path');
 //const fs = require('fs');
