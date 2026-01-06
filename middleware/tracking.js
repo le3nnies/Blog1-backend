@@ -3,17 +3,9 @@ const crypto = require('crypto');
 const UAParser = require('ua-parser-js');
 const geoip = require('geoip-lite');
 const PageView = require('../models/PageView');
-const Session = require('../models/Session');
+const { Session, SESSION_CONFIG } = require('../models/Session');
 const Event = require('../models/Event');
 const Article = require('../models/Article');
-
-// Session configuration constants
-const SESSION_CONFIG = {
-  inactivityTimeout: 2 * 60 * 60 * 1000, // 2 hours of inactivity
-  maxSessionDuration: 8 * 60 * 60 * 1000, // 8 hours absolute maximum
-  cookieExpiration: 30 * 24 * 60 * 60 * 1000, // 30 days
-  extendOnActivity: true // Extend session on any interaction
-};
 
 // Continent mapping configuration
 const CONTINENT_MAP = {
@@ -380,55 +372,7 @@ const determineMedium = (source, utmMedium, referrer) => {
   return 'referral';
 };
 
-// Categorize traffic source for reporting
-const categorizeTrafficSource = (source, medium) => {
-  const sourceLower = source.toLowerCase();
-  const mediumLower = medium.toLowerCase();
-
-  // Paid Traffic
-  if (mediumLower === 'cpc' || mediumLower === 'ppc' || mediumLower === 'paid' ||
-      sourceLower.includes('ads') || sourceLower.includes('cpc')) {
-    return 'paid';
-  }
-
-  // Organic Search
-  if (mediumLower === 'organic' ||
-      ['google', 'bing', 'yahoo', 'duckduckgo', 'baidu', 'yandex', 'naver', 'seznam', 'qwant', 'ecosia', 'startpage'].includes(sourceLower)) {
-    return 'organic_search';
-  }
-
-  // Social Media
-  if (mediumLower === 'social' ||
-      ['facebook', 'twitter', 'linkedin', 'instagram', 'pinterest', 'reddit',
-       'tiktok', 'youtube', 'snapchat', 'whatsapp', 'telegram', 'discord', 'twitch', 'vimeo'].includes(sourceLower)) {
-    return 'social';
-  }
-
-  // Email Marketing
-  if (mediumLower === 'email' || sourceLower === 'email' || sourceLower.includes('mail')) {
-    return 'email';
-  }
-
-  // Direct Traffic
-  if (sourceLower === 'direct' || mediumLower === 'none') {
-    return 'direct';
-  }
-
-  // Referral Traffic
-  if (sourceLower === 'referral' || mediumLower === 'referral') {
-    return 'referral';
-  }
-
-  // App Store Traffic
-  if (sourceLower === 'app_store') {
-    return 'app_store';
-  }
-
-  // Default
-  return 'other';
-};
-
-// Track page view middleware - Google Analytics style
+// Track page view middleware - Google Analytics style (UPDATED for unified session model)
 const trackPageView = async (req, res, next) => {
   const startTime = Date.now();
 
@@ -458,7 +402,7 @@ const trackPageView = async (req, res, next) => {
                            req.path === '/privacy' ||
                            req.path === '/terms' ||
                            req.path === '/newsletter' ||
-                           req.path === '/notfound'; // Health check removed to track all sessions
+                           req.path === '/notfound';
 
     console.log('✅ Processing session tracking for:', req.path);
 
@@ -476,109 +420,135 @@ const trackPageView = async (req, res, next) => {
     const source = determineSource(req.headers.referer, utmData.source, utmData.medium, req.headers['user-agent']);
     const medium = determineMedium(source, utmData.medium, req.headers.referer);
 
-    // Check for existing session cookie
-    let sessionId = req.cookies?.session_id;
+    // Check for existing cookies
+    const trackingCookie = req.cookies[SESSION_CONFIG.COOKIE_NAMES.TRACKING];
+    const authCookie = req.cookies[SESSION_CONFIG.COOKIE_NAMES.AUTH];
+    
+    console.log('🍪 Cookies found:', {
+      hasTrackingCookie: !!trackingCookie,
+      hasAuthCookie: !!authCookie,
+      trackingCookieName: SESSION_CONFIG.COOKIE_NAMES.TRACKING,
+      authCookieName: SESSION_CONFIG.COOKIE_NAMES.AUTH
+    });
+
     let session = null;
+    let sessionId = null;
+    let isSessionNew = false;
+    let sessionType = 'tracking';
 
-    // Try to find an active session for this user
-    session = await Session.findActiveSession(sessionId, ipAddress, userAgent);
-
-    // Google Analytics-like Session Management:
-    // If traffic source changes (and is not direct), start a new session
-    if (session) {
-      const isDirect = source === 'direct' || medium === 'none' || medium === 'direct';
-      
-      if (!isDirect) {
-        const currentCampaign = utmData.campaign || null;
-        const sessionCampaign = session.campaign || null;
+    // FIRST: Check for auth session
+    if (authCookie) {
+      console.log('🔐 Checking auth session...');
+      try {
+        // Use the static method from Session model
+        session = await Session.findAuthSession(authCookie);
         
-        // Check if source, medium, or campaign has changed
-        const sourceChanged = session.source !== source;
-        const mediumChanged = session.medium !== medium;
-        const campaignChanged = sessionCampaign !== currentCampaign;
-
-        if (sourceChanged || mediumChanged || campaignChanged) {
-          console.log('🔄 Traffic source changed (Campaign Update). Starting new session.');
-          session = null; // Force new session
+        if (session) {
+          console.log('✅ Found active auth session');
+          sessionType = 'authentication';
+          sessionId = session.sessionId;
+          
+          // Update auth session activity
+          await session.extendSession();
+          await session.incrementPageCount();
+          
+          req.session = session;
+          req.sessionType = 'authentication';
+          
+          // Skip tracking session creation for authenticated users
+          console.log('👤 User is authenticated, skipping tracking session');
+          return next();
+        } else {
+          console.log('❌ Auth session not found or expired');
+          // Clear invalid auth cookie
+          res.clearCookie(SESSION_CONFIG.COOKIE_NAMES.AUTH, {
+            path: '/',
+            httpOnly: true,
+            secure: process.env.NODE_ENV === 'production',
+            sameSite: process.env.NODE_ENV === 'production' ? 'none' : 'strict'
+          });
         }
+      } catch (error) {
+        console.error('Error checking auth session:', error.message);
       }
     }
 
-    if (session) {
-      console.log('🔄 Extending existing session:', session.sessionId);
-      // Extend the session (don't increment page count here - only for actual page views)
-      await session.extendSession();
-      sessionId = session.sessionId;
-      console.log('💾 Session extended successfully');
-    } else {
-      // No active session found, create a new one
-      sessionId = generateSessionId(req);
-      console.log('🆕 Creating new session:', sessionId);
+    // SECOND: Check for tracking session
+    if (!session && trackingCookie) {
+      console.log('📊 Checking tracking session...');
+      try {
+        session = await Session.findOne({
+          sessionId: trackingCookie,
+          sessionType: 'tracking',
+          isActive: true
+        });
+        
+        if (session) {
+          // Check if session is still active
+          if (session.isSessionActive && session.isSessionActive()) {
+            console.log('✅ Found active tracking session');
+            sessionId = session.sessionId;
+            sessionType = 'tracking';
+            
+            // Update tracking session
+            await session.extendSession();
+            await session.incrementPageCount();
+          } else {
+            console.log('❌ Tracking session expired');
+            session = null;
+          }
+        }
+      } catch (error) {
+        console.error('Error finding tracking session:', error.message);
+      }
     }
 
-    // Get device info from session if exists, otherwise parse user agent
-    let deviceInfo;
-    if (session) {
-      deviceInfo = {
-        deviceType: session.deviceType,
-        deviceCategory: session.deviceCategory,
-        deviceBrand: session.deviceBrand,
-        deviceModel: session.deviceModel,
-        isTouchDevice: session.isTouchDevice,
-        browser: session.browser,
-        browserVersion: session.browserVersion,
-        os: session.os,
-        osVersion: session.osVersion
-      };
-    } else {
+    // THIRD: If no session found, create new tracking session
+    if (!session) {
+      console.log('🆕 Creating new tracking session...');
+      sessionId = generateSessionId(req);
+      isSessionNew = true;
+      sessionType = 'tracking';
+
+      // Parse user agent for device info
       const uaData = parseUserAgent(userAgent);
-      deviceInfo = {
+      
+      // Determine continent from country
+      const getContinent = (country) => CONTINENT_MAP[country] || 'Unknown';
+      
+      // Check if this is a new visitor
+      let isNewVisitor = true;
+      try {
+        isNewVisitor = await Session.isNewVisitor(ipAddress, userAgent);
+      } catch (error) {
+        console.log('Error checking new visitor:', error.message);
+      }
+
+      // Get screen resolution from query params if available
+      const screenWidth = req.query.screenWidth ? parseInt(req.query.screenWidth) : null;
+      const screenHeight = req.query.screenHeight ? parseInt(req.query.screenHeight) : null;
+      const screenResolution = screenWidth && screenHeight ? `${screenWidth}x${screenHeight}` : null;
+
+      // Create new tracking session
+      session = new Session({
+        sessionId,
+        userId: null,
+        sessionType: 'tracking',
+        isAuthenticated: false,
+        ipAddress,
+        userAgent,
         deviceType: uaData.deviceType,
         deviceCategory: uaData.deviceCategory,
         deviceBrand: uaData.deviceBrand,
         deviceModel: uaData.deviceModel,
+        screenResolution,
+        screenWidth,
+        screenHeight,
         isTouchDevice: uaData.isTouchDevice,
         browser: uaData.browser,
         browserVersion: uaData.browserVersion,
         os: uaData.os,
-        osVersion: uaData.osVersion
-      };
-    }
-
-    // Get screen resolution from query params if available
-    const screenWidth = req.query.screenWidth ? parseInt(req.query.screenWidth) : null;
-    const screenHeight = req.query.screenHeight ? parseInt(req.query.screenHeight) : null;
-    let screenResolution = screenWidth && screenHeight ? `${screenWidth}x${screenHeight}` : null;
-
-    let isSessionNew = false;
-
-    // If we need to create a new session
-    if (!session) {
-
-      // Determine continent from country
-      const getContinent = (country) => CONTINENT_MAP[country] || 'Unknown';
-
-      // Check if this is a new visitor
-      const isNewVisitor = await Session.isNewVisitor(ipAddress, userAgent);
-
-      isSessionNew = true;
-      session = new Session({
-        sessionId,
-        userId: null, // Will be set by auth middleware if user is logged in
-        ipAddress,
-        userAgent,
-        deviceType: deviceInfo.deviceType,
-        deviceCategory: deviceInfo.deviceCategory,
-        deviceBrand: deviceInfo.deviceBrand,
-        deviceModel: deviceInfo.deviceModel,
-        screenResolution,
-        screenWidth,
-        screenHeight,
-        isTouchDevice: deviceInfo.isTouchDevice,
-        browser: deviceInfo.browser,
-        browserVersion: deviceInfo.browserVersion,
-        os: deviceInfo.os,
-        osVersion: deviceInfo.osVersion,
+        osVersion: uaData.osVersion,
         country: locationData.country,
         countryCode: locationData.country === 'Local' ? 'LOCAL' : locationData.country,
         city: locationData.city,
@@ -590,21 +560,36 @@ const trackPageView = async (req, res, next) => {
         campaign: utmData.campaign,
         startTime: new Date(),
         endTime: new Date(),
-        isActive: true,
         pageCount: 1,
+        isActive: true,
         duration: 0,
-        isNewVisitor
+        convertedAt: null
       });
 
-      await session.save();
-      console.log('💾 New session saved successfully');
-    } else if (!screenResolution && session.screenResolution) {
-      // Use existing session's screen resolution if not provided in current request
-      screenResolution = session.screenResolution;
+      try {
+        await session.save();
+        console.log('💾 New tracking session saved successfully');
+        
+        // Set tracking cookie
+        res.cookie(SESSION_CONFIG.COOKIE_NAMES.TRACKING, sessionId, {
+          httpOnly: true,
+          secure: process.env.NODE_ENV === 'production',
+          maxAge: SESSION_CONFIG.cookieExpiration,
+          sameSite: process.env.NODE_ENV === 'production' ? 'none' : 'strict',
+          path: '/'
+        });
+        console.log('🍪 Tracking cookie set');
+      } catch (error) {
+        console.error('Error saving tracking session:', error.message);
+      }
     }
 
+    // Attach session info to request
+    req.session = session;
+    req.sessionType = sessionType;
+
     // Only create PageView and update analytics for actual page views
-    if (isPageViewRoute) {
+    if (isPageViewRoute && session) {
       // Update previous page view's "Time on Page" and "Bounce" status
       if (!isSessionNew && sessionId) {
         try {
@@ -629,17 +614,9 @@ const trackPageView = async (req, res, next) => {
       if (req.path.startsWith('/article/') || req.path.startsWith('/api/articles/')) {
         const pathParts = req.path.split('/');
         // Find the part that looks like an ID (Mongo ObjectId is 24 hex chars)
-        // or if your system uses numeric IDs, adjust regex accordingly.
-        // Assuming standard Mongo ObjectIds or numeric IDs at the end or before 'view'
-
         for (const part of pathParts) {
           // Check for Mongo ObjectId (24 hex characters)
           if (/^[0-9a-fA-F]{24}$/.test(part)) {
-            articleId = part;
-            break;
-          }
-          // Fallback for numeric IDs if used
-          if (/^\d+$/.test(part) && part.length > 5) { // Simple heuristic
             articleId = part;
             break;
           }
@@ -649,8 +626,8 @@ const trackPageView = async (req, res, next) => {
       // Create PageView record for analytics
       try {
         const pageView = new PageView({
-          sessionId,
-          userId: null, // Will be set by auth middleware if user is logged in
+          sessionId: session.sessionId,
+          userId: session.userId,
           articleId,
           pageUrl: req.originalUrl || req.url,
           pageTitle: null, // Will be set by frontend if available
@@ -660,16 +637,16 @@ const trackPageView = async (req, res, next) => {
           campaign: utmData.campaign,
           content: utmData.content,
           term: utmData.term,
-          ipAddress: req.ip || req.connection.remoteAddress || 'unknown',
-          userAgent: req.headers['user-agent'] || 'unknown',
+          ipAddress,
+          userAgent,
           country: locationData.country,
           city: locationData.city,
           region: locationData.region,
-          deviceType: deviceInfo.deviceType,
-          deviceCategory: deviceInfo.deviceCategory,
-          browser: deviceInfo.browser,
-          os: deviceInfo.os,
-          screenResolution,
+          deviceType: session.deviceType,
+          deviceCategory: session.deviceCategory,
+          browser: session.browser,
+          os: session.os,
+          screenResolution: session.screenResolution,
           language: req.headers['accept-language'] || null,
           timezone: null, // Will be set by frontend if available
           timeOnPage: 0,
@@ -684,11 +661,10 @@ const trackPageView = async (req, res, next) => {
         // Increment article view count if this is an article page
         if (articleId && !isInteractionRoute) {
           // Google-like logic: Only increment view count if unique for this session
-          // This prevents F5/refresh spam from inflating views
           const hasViewedInSession = await PageView.exists({
-            sessionId,
+            sessionId: session.sessionId,
             articleId,
-            _id: { $ne: pageView._id } // Exclude the current pageview we just created
+            _id: { $ne: pageView._id }
           });
 
           if (!hasViewedInSession) {
@@ -707,21 +683,14 @@ const trackPageView = async (req, res, next) => {
         console.error('PageView creation error:', pageViewError);
         // Don't fail the request if PageView creation fails
       }
-    } else {
-      console.log('⏭️ Session extended without creating pageview (not a page view route)');
+    } else if (session) {
+      console.log('⏭️ Session updated without creating pageview (not a page view route)');
     }
-
-    // Set session cookie
-    res.cookie('session_id', sessionId, {
-      maxAge: 30 * 24 * 60 * 60 * 1000,
-      httpOnly: true,
-      secure: process.env.NODE_ENV === 'production',
-      sameSite: process.env.NODE_ENV === 'production' ? 'none' : 'lax'
-    });
 
     return next();
   } catch (error) {
     console.error('Tracking middleware error:', error);
+    console.error('Error stack:', error.stack);
     next(); // Don't block request if tracking fails
   }
 };
@@ -914,6 +883,5 @@ module.exports = {
   getLocationFromIP,
   extractUTMParameters,
   determineSource,
-  determineMedium,
-  categorizeTrafficSource
+  determineMedium
 };
