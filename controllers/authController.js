@@ -506,6 +506,256 @@ class AuthController {
       });
     }
   }
+
+  // User registration
+  async register(req, res) {
+    try {
+      const { username, email, password, role = 'author' } = req.body;
+
+      // Check if user already exists
+      const existingUser = await User.findOne({
+        $or: [{ email }, { username }]
+      });
+
+      if (existingUser) {
+        return res.status(400).json({
+          success: false,
+          error: 'User with this email or username already exists'
+        });
+      }
+
+      // Create new user
+      const user = new User({
+        username,
+        email,
+        password,
+        role,
+        isActive: true
+      });
+
+      await user.save();
+
+      // Create initial tracking session
+      const userAgent = req.headers['user-agent'];
+      const deviceInfo = extractDeviceInfo(userAgent);
+      const source = determineSource(req);
+      const referrer = req.get('referer') || req.headers.referer || 'direct';
+
+      const trackingSession = new Session({
+        sessionId: `sess_track_${uuidv4()}_${Date.now()}`,
+        sessionType: 'tracking',
+        isAuthenticated: false,
+        userId: null,
+        ipAddress: req.ip,
+        userAgent: userAgent,
+        deviceType: deviceInfo.deviceType,
+        deviceCategory: deviceInfo.deviceCategory,
+        browser: deviceInfo.browser,
+        browserVersion: deviceInfo.browserVersion,
+        os: deviceInfo.os,
+        osVersion: deviceInfo.osVersion,
+        isTouchDevice: deviceInfo.isTouchDevice,
+        referrer: referrer,
+        source: source,
+        startTime: new Date(),
+        endTime: new Date(),
+        pageCount: 1,
+        isActive: true
+      });
+
+      await trackingSession.save();
+
+      // Set tracking cookie
+      res.cookie(SESSION_CONFIG.COOKIE_NAMES?.TRACKING || 'tracking_session_id', trackingSession.sessionId, {
+        httpOnly: true,
+        secure: process.env.NODE_ENV === 'production',
+        sameSite: process.env.NODE_ENV === 'production' ? 'none' : 'strict',
+        maxAge: SESSION_CONFIG.cookieExpiration,
+        path: '/'
+      });
+
+      res.status(201).json({
+        success: true,
+        message: 'User registered successfully',
+        data: {
+          user: {
+            id: user._id,
+            username: user.username,
+            email: user.email,
+            role: user.role
+          }
+        }
+      });
+
+    } catch (error) {
+      console.error('Registration error:', error);
+      res.status(500).json({
+        success: false,
+        error: 'Failed to register user'
+      });
+    }
+  }
+
+  // Get current user info
+  async getCurrentUser(req, res) {
+    try {
+      const user = await User.findById(req.user._id).select('-password');
+      if (!user) {
+        return res.status(404).json({
+          success: false,
+          error: 'User not found'
+        });
+      }
+
+      res.json({
+        success: true,
+        data: { user }
+      });
+    } catch (error) {
+      console.error('Get current user error:', error);
+      res.status(500).json({
+        success: false,
+        error: 'Failed to get user info'
+      });
+    }
+  }
+
+  // Update user profile
+  async updateProfile(req, res) {
+    try {
+      const { username, bio, avatar } = req.body;
+      const userId = req.user._id;
+
+      // Check if username is taken by another user
+      if (username) {
+        const existingUser = await User.findOne({
+          username,
+          _id: { $ne: userId }
+        });
+        if (existingUser) {
+          return res.status(400).json({
+            success: false,
+            error: 'Username already taken'
+          });
+        }
+      }
+
+      const updateData = {};
+      if (username) updateData.username = username;
+      if (bio !== undefined) updateData.bio = bio;
+      if (avatar) updateData.avatar = avatar;
+
+      const user = await User.findByIdAndUpdate(
+        userId,
+        updateData,
+        { new: true, runValidators: true }
+      ).select('-password');
+
+      if (!user) {
+        return res.status(404).json({
+          success: false,
+          error: 'User not found'
+        });
+      }
+
+      res.json({
+        success: true,
+        data: { user },
+        message: 'Profile updated successfully'
+      });
+    } catch (error) {
+      console.error('Update profile error:', error);
+      res.status(500).json({
+        success: false,
+        error: 'Failed to update profile'
+      });
+    }
+  }
+
+  // Change password
+  async changePassword(req, res) {
+    try {
+      const { currentPassword, newPassword } = req.body;
+      const user = await User.findById(req.user._id);
+
+      if (!user) {
+        return res.status(404).json({
+          success: false,
+          error: 'User not found'
+        });
+      }
+
+      // Verify current password
+      const isCurrentPasswordValid = await user.comparePassword(currentPassword);
+      if (!isCurrentPasswordValid) {
+        return res.status(400).json({
+          success: false,
+          error: 'Current password is incorrect'
+        });
+      }
+
+      // Update password
+      user.password = newPassword;
+      await user.save();
+
+      res.json({
+        success: true,
+        message: 'Password changed successfully'
+      });
+    } catch (error) {
+      console.error('Change password error:', error);
+      res.status(500).json({
+        success: false,
+        error: 'Failed to change password'
+      });
+    }
+  }
+
+  // Create initial admin user
+  async createAdmin(req, res) {
+    try {
+      // Check if any admin already exists
+      const existingAdmin = await User.findOne({ role: 'admin' });
+      if (existingAdmin) {
+        return res.status(400).json({
+          success: false,
+          error: 'Admin user already exists'
+        });
+      }
+
+      const { username, email, password } = req.body;
+
+      // Create admin user
+      const admin = new User({
+        username,
+        email,
+        password,
+        role: 'admin',
+        isActive: true
+      });
+
+      await admin.save();
+
+      res.status(201).json({
+        success: true,
+        message: 'Admin user created successfully',
+        data: {
+          user: {
+            id: admin._id,
+            username: admin.username,
+            email: admin.email,
+            role: admin.role
+          }
+        }
+      });
+    } catch (error) {
+      console.error('Create admin error:', error);
+      res.status(500).json({
+        success: false,
+        error: 'Failed to create admin user'
+      });
+    }
+  }
 }
 
 module.exports = new AuthController();
