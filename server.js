@@ -8,6 +8,7 @@ const cookieParser = require('cookie-parser');
 const { connectDB, isDBConnected, waitForDB } = require('./utils/database');
 const { startTrendingScoreUpdates } = require('./utils/trendingAlgorithm');
 const newsletterController = require('./controllers/newsletterController');
+const Session = require('./models/Session');
 const cron = require('node-cron');
 const path = require('path');
 const fs = require('fs');
@@ -336,7 +337,6 @@ function startServer() {
       try {
         // Mark active sessions as inactive
         if (mongoose.connection.readyState === 1) {
-          const Session = mongoose.model('Session');
           const result = await Session.updateMany(
             { isActive: true },
             { isActive: false, endTime: new Date() }
