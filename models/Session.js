@@ -137,6 +137,19 @@ sessionSchema.methods.convertToAuthSession = function(userId) {
   return this.save();
 };
 
+// NEW: Method to extend session activity
+sessionSchema.methods.extendSession = function() {
+  this.endTime = new Date();
+  return this.save();
+};
+
+// NEW: Method to increment page count
+sessionSchema.methods.incrementPageCount = function() {
+  this.pageCount += 1;
+  this.endTime = new Date();
+  return this.save();
+};
+
 // NEW: Static method to check if visitor is new
 sessionSchema.statics.isNewVisitor = async function(ipAddress) {
   if (!ipAddress) return false;
