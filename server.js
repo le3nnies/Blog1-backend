@@ -71,10 +71,7 @@ app.use((req, res, next) => {
       path: '/'
     };
     
-    // Add domain for production cookies
-    if (isProduction && !options.domain) {
-      finalOptions.domain = '.onrender.com';
-    }
+    // Domain is not set to allow cookies to be scoped to the specific backend domain
     
     // Set maxAge based on cookie type
     if (!finalOptions.maxAge) {
@@ -106,9 +103,7 @@ app.use((req, res, next) => {
       sameSite: isProduction ? 'none' : 'lax'
     };
     
-    if (isProduction && !options.domain) {
-      finalOptions.domain = '.onrender.com';
-    }
+    // Domain is not set to allow cookies to be scoped to the specific backend domain
     
     console.log(`🗑️ CLEAR COOKIE: ${name}`);
     return originalClearCookie.call(this, name, finalOptions);
@@ -326,7 +321,7 @@ function startServer() {
   const server = app.listen(PORT, () => {
     console.log(`\n✅ Server running on port ${PORT}`);
     console.log('🌍 Environment:', process.env.NODE_ENV);
-    console.log('🔒 Cookies: secure=true, sameSite=none, domain=.onrender.com');
+    console.log('🔒 Cookies: secure=true, sameSite=none, domain=backend-specific');
     
     startBackgroundJobs();
   });
