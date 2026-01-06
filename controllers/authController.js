@@ -1,439 +1,513 @@
-const jwt = require('jsonwebtoken');  
-const User = require('../models/User');  
-const Session = require('../models/Session');  
-const { v4: uuidv4 } = require('uuid');  
-const bcrypt = require('bcryptjs');  
+// controllers/authController.js
+const User = require('../models/User');
+const { Session, SESSION_CONFIG } = require('../models/Session');
+const { v4: uuidv4 } = require('uuid');
+
+// Helper function to extract device info from user agent
+function extractDeviceInfo(userAgent) {
+  const ua = userAgent || '';
+  const deviceInfo = {
+    deviceType: 'unknown',
+    deviceCategory: 'unknown',
+    browser: 'unknown',
+    browserVersion: '',
+    os: 'unknown',
+    osVersion: '',
+    screenResolution: '',
+    isTouchDevice: false
+  };
   
-class AuthController {
-  constructor() {
-    this.register = this.register.bind(this);
-    this.login = this.login.bind(this);
-    this.createAdmin = this.createAdmin.bind(this);
-    this.getCurrentUser = this.getCurrentUser.bind(this);
-    this.updateProfile = this.updateProfile.bind(this);
-    this.changePassword = this.changePassword.bind(this);
-    this.logout = this.logout.bind(this);
-    this._createSession = this._createSession.bind(this);
-    this._extractDeviceInfo = this._extractDeviceInfo.bind(this);
-    this._extractLocationInfo = this._extractLocationInfo.bind(this);
+  // Device type detection
+  if (ua.match(/mobile/i)) {
+    deviceInfo.deviceType = 'mobile';
+    deviceInfo.deviceCategory = 'smartphone';
+    deviceInfo.isTouchDevice = true;
+  } else if (ua.match(/tablet/i)) {
+    deviceInfo.deviceType = 'tablet';
+    deviceInfo.deviceCategory = 'tablet';
+    deviceInfo.isTouchDevice = true;
+  } else if (ua.match(/tv|smart-tv|appletv|roku|chromecast|fire tv/i)) {
+    deviceInfo.deviceType = 'tv';
+    deviceInfo.deviceCategory = 'tv';
+  } else if (ua.match/(xbox|playstation|nintendo)/i) {
+    deviceInfo.deviceType = 'console';
+    deviceInfo.deviceCategory = 'console';
+  } else if (ua.match/(watch|wearable)/i) {
+    deviceInfo.deviceType = 'wearable';
+    deviceInfo.deviceCategory = 'wearable';
+  } else {
+    deviceInfo.deviceType = 'desktop';
+    deviceInfo.deviceCategory = 'desktop';
   }
-
-  // User registration
-  async register(req, res) {  
-    try {  
-      const { username, email, password, role, bio } = req.body;  
   
-      // Check if user already exists  
-      const existingUser = await User.findOne({  
-        $or: [{ email }, { username }]  
-      });  
+  // Browser detection
+  const chromeMatch = ua.match(/chrome\/(\d+)/i);
+  const firefoxMatch = ua.match(/firefox\/(\d+)/i);
+  const safariMatch = ua.match(/version\/(\d+).*safari/i);
+  const edgeMatch = ua.match(/edg\/(\d+)/i);
   
-      if (existingUser) {  
-        return res.status(400).json({  
-          success: false,  
-          error: 'User with this email or username already exists'  
-        });  
-      }  
+  if (chromeMatch) {
+    deviceInfo.browser = 'Chrome';
+    deviceInfo.browserVersion = chromeMatch[1];
+  } else if (firefoxMatch) {
+    deviceInfo.browser = 'Firefox';
+    deviceInfo.browserVersion = firefoxMatch[1];
+  } else if (safariMatch) {
+    deviceInfo.browser = 'Safari';
+    deviceInfo.browserVersion = safariMatch[1];
+  } else if (edgeMatch) {
+    deviceInfo.browser = 'Edge';
+    deviceInfo.browserVersion = edgeMatch[1];
+  } else if (ua.match(/opera|opr/i)) {
+    deviceInfo.browser = 'Opera';
+  }
   
-      // Only admins can create other admins  
-      const userRole = req.user && req.user.role === 'admin' ? role : 'author';  
+  // OS detection
+  if (ua.match(/windows nt 10/i)) {
+    deviceInfo.os = 'Windows';
+    deviceInfo.osVersion = '10';
+  } else if (ua.match(/windows nt 6.3/i)) {
+    deviceInfo.os = 'Windows';
+    deviceInfo.osVersion = '8.1';
+  } else if (ua.match(/windows nt 6.2/i)) {
+    deviceInfo.os = 'Windows';
+    deviceInfo.osVersion = '8';
+  } else if (ua.match(/windows nt 6.1/i)) {
+    deviceInfo.os = 'Windows';
+    deviceInfo.osVersion = '7';
+  } else if (ua.match(/mac os x (\d+[._]\d+)/i)) {
+    deviceInfo.os = 'macOS';
+    deviceInfo.osVersion = ua.match(/mac os x (\d+[._]\d+)/i)[1].replace('_', '.');
+  } else if (ua.match(/linux/i)) {
+    deviceInfo.os = 'Linux';
+  } else if (ua.match(/android (\d+)/i)) {
+    deviceInfo.os = 'Android';
+    deviceInfo.osVersion = ua.match(/android (\d+)/i)[1];
+  } else if (ua.match(/iphone os (\d+)/i) || ua.match(/ipad;.*os (\d+)/i)) {
+    deviceInfo.os = 'iOS';
+    deviceInfo.osVersion = (ua.match(/iphone os (\d+)/i) || ua.match(/ipad;.*os (\d+)/i))[1];
+  }
   
-      const user = new User({  
-        username,  
-        email,  
-        password,  
-        role: userRole,  
-        bio  
-      });  
-  
-      await user.save();  
-  
-      // Create session for new user (auto-login after registration)  
-      const sessionId = `sess_${uuidv4()}_${Date.now()}`;  
-      await this._createSession(sessionId, user._id, req);  
-  
-      // Set session cookie  
-      res.cookie('session_id', sessionId, {  
-        httpOnly: true,  
-        secure: process.env.NODE_ENV === 'production',  
-        sameSite: process.env.NODE_ENV === 'production' ? 'none' : 'strict',  
-        maxAge: 30 * 24 * 60 * 60 * 1000 // 30 days  
-      });  
-  
-      res.status(201).json({  
-        success: true,  
-        data: {  
-          user: {  
-            id: user._id,  
-            username: user.username,  
-            email: user.email,  
-            role: user.role,  
-            bio: user.bio  
-          }  
-        }  
-      });  
-    } catch (error) {  
-      console.error('Registration error:', error);  
-      res.status(500).json({  
-        success: false,  
-        error: 'Failed to create user'  
-      });  
-    }  
-  }  
-  
-  // User login    
-async login(req, res) {    
-  try {    
-    const { email, password } = req.body;    
-    
-    console.log('Login attempt for:', email);    
-    
-    // Find user by email    
-    const user = await User.findOne({ email });    
-    if (!user) {    
-      console.log('User not found:', email);    
-      return res.status(401).json({    
-        success: false,    
-        error: 'Invalid credentials'    
-      });    
-    }    
-    
-    // Check if user is active    
-    if (!user.isActive) {    
-      return res.status(401).json({    
-        success: false,    
-        error: 'Account is deactivated'    
-      });    
-    }    
-    
-    // Verify password    
-    console.log('Verifying password...');    
-    const isPasswordValid = await user.comparePassword(password);    
-    if (!isPasswordValid) {    
-      console.log('Invalid password for user:', email);    
-      return res.status(401).json({    
-        success: false,    
-        error: 'Invalid credentials'    
-      });    
-    }    
-    
-    console.log('Password valid, creating session...');  
-  
-    // Generate unique session ID  
-    const { v4: uuidv4 } = require('uuid');  
-    const sessionId = `sess_${uuidv4()}_${Date.now()}`;  
-  
-    // Create session with authenticated user's ID  
-    const session = new Session({    
-      sessionId,    
-      userId: user._id, // Critical: Must set the authenticated user's ID    
-      isActive: true,    
-      startTime: new Date(),    
-      endTime: new Date(),  
-      ipAddress: req.ip,  
-      userAgent: req.headers['user-agent']  
-    });    
-    
-    await session.save();    
-    console.log('Session created successfully');  
-  
-    // Set the cookie that authMiddleware expects    
-    res.cookie('session_id', sessionId, {    
-      httpOnly: true,    
-      secure: process.env.NODE_ENV === 'production',    
-      sameSite: process.env.NODE_ENV === 'production' ? 'none' : 'strict',  
-      maxAge: 30 * 24 * 60 * 60 * 1000 // 30 days  
-    });  
-  
-    // Return user info without password    
-    const userResponse = user.toJSON ? user.toJSON() : {    
-      id: user._id,    
-      username: user.username,    
-      email: user.email,    
-      role: user.role,    
-      avatar: user.avatar,    
-      bio: user.bio    
-    };    
-    
-    res.json({    
-      success: true,    
-      data: {    
-        user: userResponse    
-      }    
-    });    
-    
-  } catch (error) {    
-    console.error('Login error details:', error);    
-    res.status(500).json({    
-      success: false,    
-      error: 'Failed to login: ' + error.message    
-    });    
-  }    
+  return deviceInfo;
 }
-  // Create admin user (for development)  
-  async createAdmin(req, res) {  
-    try {  
-      console.log('Creating admin user...');  
-  
-      // Check if admin already exists  
-      const existingAdmin = await User.findOne({ email: 'admin@trendblog.com' });  
-      if (existingAdmin) {  
-        console.log('Admin user already exists');  
-        return res.json({  
-          success: true,  
-          message: 'Admin user already exists',  
-          data: {  
-            user: existingAdmin.toJSON ? existingAdmin.toJSON() : {  
-              id: existingAdmin._id,  
-              username: existingAdmin.username,  
-              email: existingAdmin.email,  
-              role: existingAdmin.role  
-            }  
-          }  
-        });  
-      }  
-  
-      // Create admin user  
-      const adminUser = new User({  
-        username: 'admin',  
-        email: 'admin@trendblog.com',  
-        password: 'admin123', // Will be hashed by pre-save hook  
-        role: 'admin',  
-        bio: 'System Administrator'  
-      });  
-  
-      await adminUser.save();  
-      console.log('Admin user created successfully');  
-  
-      res.status(201).json({  
-        success: true,  
-        message: 'Admin user created successfully',  
-        data: {  
-          user: {  
-            id: adminUser._id,  
-            username: adminUser.username,  
-            email: adminUser.email,  
-            role: adminUser.role,  
-            bio: adminUser.bio  
-          }  
-        }  
-      });  
-  
-    } catch (error) {  
-      console.error('Create admin error:', error);  
-      res.status(500).json({  
-        success: false,  
-        error: 'Failed to create admin user: ' + error.message  
-      });  
-    }  
-  }  
-  
-  // Get current user  
-  async getCurrentUser(req, res) {  
-    try {  
-      if (!req.user) {  
-        return res.status(401).json({  
-          success: false,  
-          error: 'User not authenticated'  
-        });  
-      }  
-  
-      const user = req.user;  
-      const userData = {  
-        id: user._id.toString(),  
-        username: user.username,  
-        email: user.email,  
-        role: user.role,  
-        avatar: user.avatar,  
-        bio: user.bio  
-      };  
-  
-      res.json({  
-        success: true,  
-        data: userData  
-      });  
-    } catch (error) {  
-      console.error('Get current user error:', error);  
-      res.status(500).json({  
-        success: false,  
-        error: 'Failed to get user data'  
-      });  
-    }  
-  }  
-  
-  // Update user profile  
-  async updateProfile(req, res) {  
-    try {  
-      const { username, email, bio, avatar } = req.body;  
-  
-      // Check if username or email already exists (excluding current user)  
-      const existingUser = await User.findOne({  
-        $and: [  
-          { _id: { $ne: req.user._id } },  
-          { $or: [{ email }, { username }] }  
-        ]  
-      });  
-  
-      if (existingUser) {  
-        return res.status(400).json({  
-          success: false,  
-          error: 'Username or email already exists'  
-        });  
-      }  
-  
-      const updateData = {};  
-      if (username) updateData.username = username;  
-      if (email) updateData.email = email;  
-      if (bio !== undefined) updateData.bio = bio;  
-      if (avatar) updateData.avatar = avatar;  
-  
-      const user = await User.findByIdAndUpdate(  
-        req.user._id,  
-        updateData,  
-        { new: true, runValidators: true }  
-      );  
-  
-      res.json({  
-        success: true,  
-        data: user  
-      });  
-    } catch (error) {  
-      console.error('Update profile error:', error);  
-      res.status(500).json({  
-        success: false,  
-        error: 'Failed to update profile'  
-      });  
-    }  
-  }  
-  
-  // Change password  
-  async changePassword(req, res) {  
-    try {  
-      const { currentPassword, newPassword } = req.body;  
-  
-      const user = await User.findById(req.user._id);  
-        
-      // Verify current password  
-      const isCurrentPasswordValid = await user.comparePassword(currentPassword);  
-      if (!isCurrentPasswordValid) {  
-        return res.status(400).json({  
-          success: false,  
-          error: 'Current password is incorrect'  
-        });  
-      }  
-  
-      // Update password  
-      user.password = newPassword;  
-      await user.save();  
-  
-      res.json({  
-        success: true,  
-        message: 'Password updated successfully'  
-      });  
-    } catch (error) {  
-      console.error('Change password error:', error);  
-      res.status(500).json({  
-        success: false,  
-        error: 'Failed to change password'  
-      });  
-    }  
-  }  
-  
-  // Logout - clear session  
-  async logout(req, res) {  
-    try {  
-      // Get session ID from cookie  
-      const sessionId = req.cookies?.session_id;  
-        
-      if (sessionId) {  
-        // Delete session from database  
-        await Session.deleteOne({ sessionId });  
-        console.log('Session deleted:', sessionId);  
-      }  
-  
-      // Clear the session cookie  
-      res.clearCookie('session_id', {  
-        httpOnly: true,  
-        secure: process.env.NODE_ENV === 'production',  
-        sameSite: process.env.NODE_ENV === 'production' ? 'none' : 'strict'  
-      });  
-  
-      res.json({  
-        success: true,  
-        message: 'Logged out successfully'  
-      });  
-    } catch (error) {  
-      console.error('Logout error:', error);  
-      res.status(500).json({  
-        success: false,  
-        error: 'Failed to logout'  
-      });  
-    }  
-  }  
-  
-  // Helper method to create session with device info
-  _createSession = async (sessionId, userId, req) => {
-    const deviceInfo = this._extractDeviceInfo(req);
-    const locationInfo = this._extractLocationInfo(req);
 
-    await Session.create({
-      sessionId,
-      userId,
-      ...deviceInfo,
-      ...locationInfo,
-      startTime: new Date(),
-      endTime: new Date(),
-      isActive: true
+// Helper function to determine traffic source
+function determineSource(req) {
+  const referrer = req.get('referer') || req.headers.referer;
+  
+  if (!referrer) return 'direct';
+  
+  if (referrer.includes('google.com')) return 'google';
+  if (referrer.includes('facebook.com') || 
+      referrer.includes('twitter.com') || 
+      referrer.includes('linkedin.com') ||
+      referrer.includes('instagram.com')) return 'social';
+  if (referrer.includes('mail.') || referrer.includes('email') || referrer.includes('newsletter')) return 'email';
+  
+  return 'referral';
+}
+
+// User login - Updated with unified session model
+async login(req, res) {
+  try {
+    const { email, password } = req.body;
+    
+    console.log('Login attempt for:', email);
+    
+    // Find user by email
+    const user = await User.findOne({ email });
+    if (!user) {
+      console.log('User not found:', email);
+      return res.status(401).json({
+        success: false,
+        error: 'Invalid credentials'
+      });
+    }
+    
+    // Check if user is active
+    if (!user.isActive) {
+      return res.status(401).json({
+        success: false,
+        error: 'Account is deactivated'
+      });
+    }
+    
+    // Verify password
+    console.log('Verifying password...');
+    const isPasswordValid = await user.comparePassword(password);
+    if (!isPasswordValid) {
+      console.log('Invalid password for user:', email);
+      return res.status(401).json({
+        success: false,
+        error: 'Invalid credentials'
+      });
+    }
+    
+    console.log('Password valid, creating/updating session...');
+    
+    // Check if user already has active auth session (prevent multiple sessions)
+    const existingAuthSession = await Session.findOne({
+      userId: user._id,
+      sessionType: 'authentication',
+      isActive: true,
+      endTime: { $gte: new Date(Date.now() - SESSION_CONFIG.inactivityTimeout) }
+    }).sort({ endTime: -1 });
+    
+    let sessionId;
+    let session;
+    let isConvertedFromTracking = false;
+    
+    // Check if there's a tracking session to convert
+    const trackingCookie = req.cookies[SESSION_CONFIG.COOKIE_NAMES?.TRACKING || 'tracking_session_id'];
+    let trackingSession = null;
+    
+    if (trackingCookie) {
+      trackingSession = await Session.findOne({
+        sessionId: trackingCookie,
+        sessionType: 'tracking',
+        isAuthenticated: false
+      });
+      
+      if (trackingSession) {
+        console.log('Found tracking session to convert:', trackingCookie);
+      }
+    }
+    
+    if (trackingSession) {
+      // CONVERT TRACKING SESSION TO AUTH SESSION
+      console.log('Converting tracking session to auth session...');
+      
+      sessionId = trackingSession.sessionId;
+      isConvertedFromTracking = true;
+      
+      // Update tracking session to become auth session
+      trackingSession.userId = user._id;
+      trackingSession.sessionType = 'authentication';
+      trackingSession.isAuthenticated = true;
+      trackingSession.convertedAt = new Date();
+      trackingSession.endTime = new Date();
+      trackingSession.pageCount += 1;
+      
+      await trackingSession.save();
+      session = trackingSession;
+      
+      // Clear the tracking cookie (now using auth cookie)
+      res.clearCookie(SESSION_CONFIG.COOKIE_NAMES?.TRACKING || 'tracking_session_id', {
+        path: '/',
+        httpOnly: true,
+        secure: process.env.NODE_ENV === 'production',
+        sameSite: process.env.NODE_ENV === 'production' ? 'none' : 'strict'
+      });
+      
+      console.log('Successfully converted tracking session to auth session');
+      
+    } else if (existingAuthSession) {
+      // REUSE EXISTING AUTH SESSION
+      console.log('Reusing existing auth session...');
+      
+      sessionId = existingAuthSession.sessionId;
+      existingAuthSession.endTime = new Date();
+      existingAuthSession.pageCount += 1;
+      
+      await existingAuthSession.save();
+      session = existingAuthSession;
+      
+      console.log('Reused existing auth session');
+      
+    } else {
+      // CREATE NEW AUTH SESSION
+      console.log('Creating new auth session...');
+      
+      // Generate unique session ID
+      sessionId = `sess_auth_${uuidv4()}_${Date.now()}`;
+      
+      // Get device info from request
+      const userAgent = req.headers['user-agent'];
+      const deviceInfo = extractDeviceInfo(userAgent);
+      
+      // Determine traffic source
+      const source = determineSource(req);
+      const referrer = req.get('referer') || req.headers.referer || 'direct';
+      
+      // Create new auth session
+      session = new Session({
+        sessionId,
+        userId: user._id,
+        sessionType: 'authentication',
+        isAuthenticated: true,
+        ipAddress: req.ip,
+        userAgent: userAgent,
+        deviceType: deviceInfo.deviceType,
+        deviceCategory: deviceInfo.deviceCategory,
+        browser: deviceInfo.browser,
+        browserVersion: deviceInfo.browserVersion,
+        os: deviceInfo.os,
+        osVersion: deviceInfo.osVersion,
+        isTouchDevice: deviceInfo.isTouchDevice,
+        referrer: referrer,
+        source: source,
+        startTime: new Date(),
+        endTime: new Date(),
+        pageCount: 1,
+        isActive: true,
+        convertedAt: null // Not a conversion, fresh auth session
+      });
+      
+      await session.save();
+      console.log('Created new auth session');
+    }
+    
+    // Set the auth cookie (shorter expiration for security)
+    const authCookieMaxAge = 2 * 60 * 60 * 1000; // 2 hours for auth sessions
+    
+    res.cookie(SESSION_CONFIG.COOKIE_NAMES?.AUTH || 'session_id', sessionId, {
+      httpOnly: true,
+      secure: process.env.NODE_ENV === 'production',
+      sameSite: process.env.NODE_ENV === 'production' ? 'none' : 'strict',
+      maxAge: authCookieMaxAge,
+      path: '/'
+    });
+    
+    console.log('Auth cookie set with 2-hour expiration');
+    
+    // Return user info without password
+    const userResponse = user.toJSON ? user.toJSON() : {
+      id: user._id,
+      username: user.username,
+      email: user.email,
+      role: user.role,
+      avatar: user.avatar,
+      bio: user.bio,
+      isActive: user.isActive,
+      createdAt: user.createdAt,
+      updatedAt: user.updatedAt
+    };
+    
+    // Remove sensitive data
+    delete userResponse.password;
+    delete userResponse.resetPasswordToken;
+    delete userResponse.resetPasswordExpires;
+    
+    // Prepare response with session info
+    const response = {
+      success: true,
+      data: {
+        user: userResponse,
+        session: {
+          id: session.sessionId,
+          type: session.sessionType,
+          converted: isConvertedFromTracking,
+          expiresIn: '2 hours',
+          device: session.deviceType,
+          browser: session.browser
+        }
+      }
+    };
+    
+    // If session was converted from tracking, include timestamp
+    if (session.convertedAt) {
+      response.data.session.convertedAt = session.convertedAt;
+    }
+    
+    res.json(response);
+    
+  } catch (error) {
+    console.error('Login error details:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to login: ' + error.message
     });
   }
+}
 
-  // Helper method to extract device information
-  _extractDeviceInfo = (req) => {
-    const userAgent = req.headers['user-agent'] || '';
-
-    // Simple device detection (you can use a library like 'ua-parser-js' for better detection)
-    const isMobile = /Mobile|Android|iPhone|iPad/.test(userAgent);
-    const isTablet = /iPad|Tablet/.test(userAgent);
-
-    let deviceType = 'desktop';
-    if (isTablet) deviceType = 'tablet';
-    else if (isMobile) deviceType = 'mobile';
-
-    // Extract browser info (basic implementation)
-    let browser = 'Unknown';
-    let os = 'Unknown';
-
-    if (userAgent.includes('Chrome')) browser = 'Chrome';
-    else if (userAgent.includes('Firefox')) browser = 'Firefox';
-    else if (userAgent.includes('Safari')) browser = 'Safari';
-
-    if (userAgent.includes('Windows')) os = 'Windows';
-    else if (userAgent.includes('Mac')) os = 'macOS';
-    else if (userAgent.includes('Linux')) os = 'Linux';
-    else if (userAgent.includes('Android')) os = 'Android';
-    else if (userAgent.includes('iOS')) os = 'iOS';
-
-    return {
-      userAgent,
-      deviceType,
-      browser,
-      os,
-      ipAddress: req.ip || req.connection.remoteAddress,
-      referrer: req.headers.referer || 'direct'
-    };
+// User logout
+async logout(req, res) {
+  try {
+    const sessionId = req.cookies[SESSION_CONFIG.COOKIE_NAMES?.AUTH || 'session_id'];
+    
+    if (sessionId) {
+      // Mark auth session as inactive
+      const authSession = await Session.findOne({ 
+        sessionId, 
+        sessionType: 'authentication' 
+      });
+      
+      if (authSession) {
+        authSession.isActive = false;
+        authSession.endTime = new Date();
+        authSession.duration = Math.round((authSession.endTime - authSession.startTime) / 1000);
+        await authSession.save();
+        console.log('Auth session terminated:', sessionId);
+      }
+      
+      // Clear auth cookie
+      res.clearCookie(SESSION_CONFIG.COOKIE_NAMES?.AUTH || 'session_id', {
+        path: '/',
+        httpOnly: true,
+        secure: process.env.NODE_ENV === 'production',
+        sameSite: process.env.NODE_ENV === 'production' ? 'none' : 'strict'
+      });
+      
+      console.log('Auth cookie cleared');
+    }
+    
+    // Create new tracking session for anonymous browsing
+    const newTrackingSessionId = `sess_track_${uuidv4()}_${Date.now()}`;
+    
+    const userAgent = req.headers['user-agent'];
+    const deviceInfo = extractDeviceInfo(userAgent);
+    const source = determineSource(req);
+    const referrer = req.get('referer') || req.headers.referer || 'direct';
+    
+    const trackingSession = new Session({
+      sessionId: newTrackingSessionId,
+      sessionType: 'tracking',
+      isAuthenticated: false,
+      userId: null,
+      ipAddress: req.ip,
+      userAgent: userAgent,
+      deviceType: deviceInfo.deviceType,
+      deviceCategory: deviceInfo.deviceCategory,
+      browser: deviceInfo.browser,
+      browserVersion: deviceInfo.browserVersion,
+      os: deviceInfo.os,
+      osVersion: deviceInfo.osVersion,
+      isTouchDevice: deviceInfo.isTouchDevice,
+      referrer: referrer,
+      source: source,
+      startTime: new Date(),
+      endTime: new Date(),
+      pageCount: 1,
+      isActive: true
+    });
+    
+    await trackingSession.save();
+    
+    // Set tracking cookie (longer expiration for tracking)
+    res.cookie(SESSION_CONFIG.COOKIE_NAMES?.TRACKING || 'tracking_session_id', newTrackingSessionId, {
+      httpOnly: true,
+      secure: process.env.NODE_ENV === 'production',
+      sameSite: process.env.NODE_ENV === 'production' ? 'none' : 'strict',
+      maxAge: SESSION_CONFIG.cookieExpiration,
+      path: '/'
+    });
+    
+    res.json({
+      success: true,
+      message: 'Logged out successfully',
+      data: {
+        session: {
+          id: newTrackingSessionId,
+          type: 'tracking'
+        }
+      }
+    });
+    
+  } catch (error) {
+    console.error('Logout error details:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to logout: ' + error.message
+    });
   }
+}
 
-  // Helper method to extract location (basic implementation)
-  _extractLocationInfo = (req) => {
-    // In production, you'd use a GeoIP service
-    return {
-      country: 'Unknown',
-      countryCode: 'Unknown',
-      city: 'Unknown',
-      region: 'Unknown',
-      continent: 'Unknown'
+// Get current session info
+async getSessionInfo(req, res) {
+  try {
+    const sessionId = req.cookies[SESSION_CONFIG.COOKIE_NAMES?.AUTH || 'session_id'];
+    
+    if (!sessionId) {
+      return res.json({
+        success: true,
+        data: {
+          isAuthenticated: false,
+          sessionType: 'none'
+        }
+      });
+    }
+    
+    const session = await Session.findOne({ 
+      sessionId,
+      isActive: true 
+    });
+    
+    if (!session) {
+      // Clear invalid session cookie
+      res.clearCookie(SESSION_CONFIG.COOKIE_NAMES?.AUTH || 'session_id');
+      
+      return res.json({
+        success: true,
+        data: {
+          isAuthenticated: false,
+          sessionType: 'none'
+        }
+      });
+    }
+    
+    // Check if session is still active
+    if (!session.isSessionActive()) {
+      session.isActive = false;
+      await session.save();
+      res.clearCookie(SESSION_CONFIG.COOKIE_NAMES?.AUTH || 'session_id');
+      
+      return res.json({
+        success: true,
+        data: {
+          isAuthenticated: false,
+          sessionType: 'expired'
+        }
+      });
+    }
+    
+    // Update session activity
+    await session.extendSession();
+    
+    const response = {
+      success: true,
+      data: {
+        isAuthenticated: session.isAuthenticated,
+        sessionType: session.sessionType,
+        sessionId: session.sessionId,
+        userId: session.userId,
+        device: session.deviceType,
+        browser: session.browser,
+        pagesViewed: session.pageCount,
+        duration: session.duration,
+        isActive: session.isActive,
+        startTime: session.startTime,
+        lastActivity: session.endTime
+      }
     };
+    
+    // Add user info if authenticated
+    if (session.isAuthenticated && session.userId) {
+      const user = await User.findById(session.userId).select('-password');
+      if (user) {
+        response.data.user = {
+          id: user._id,
+          username: user.username,
+          email: user.email,
+          role: user.role,
+          avatar: user.avatar,
+          bio: user.bio
+        };
+      }
+    }
+    
+    res.json(response);
+    
+  } catch (error) {
+    console.error('Get session info error:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to get session info'
+    });
   }
-}  
-  
-module.exports = new AuthController();
+}
+
+module.exports = {
+  login,
+  logout,
+  getSessionInfo
+};
