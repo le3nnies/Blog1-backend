@@ -107,8 +107,9 @@ function determineSource(req) {
   return 'referral';  
 }  
   
-// User login - Updated with unified session model  
-async login(req, res) {  
+// User login - Updated with unified session model
+class AuthController {
+  async login(req, res) {
   try {  
     const { email, password } = req.body;  
       
@@ -320,194 +321,191 @@ async login(req, res) {
   }  
 }  
   
-// User logout  
-async logout(req, res) {  
-  try {  
-    const sessionId = req.cookies[SESSION_CONFIG.COOKIE_NAMES?.AUTH || 'session_id'];  
-      
-    if (sessionId) {  
-      // Mark auth session as inactive  
-      const authSession = await Session.findOne({   
-        sessionId,   
-        sessionType: 'authentication'   
-      });  
-        
-      if (authSession) {  
-        authSession.isActive = false;  
-        authSession.endTime = new Date();  
-        authSession.duration = Math.round((authSession.endTime - authSession.startTime) / 1000);  
-        await authSession.save();  
-        console.log('Auth session terminated:', sessionId);  
-      }  
-        
-      // Clear auth cookie  
-      res.clearCookie(SESSION_CONFIG.COOKIE_NAMES?.AUTH || 'session_id', {  
-        path: '/',  
-        httpOnly: true,  
-        secure: process.env.NODE_ENV === 'production',  
-        sameSite: process.env.NODE_ENV === 'production' ? 'none' : 'strict'  
-      });  
-        
-      console.log('Auth cookie cleared');  
-    }  
-      
-    // Create new tracking session for anonymous browsing  
-    const newTrackingSessionId = `sess_track_${uuidv4()}_${Date.now()}`;  
-      
-    const userAgent = req.headers['user-agent'];  
-    const deviceInfo = extractDeviceInfo(userAgent);  
-    const source = determineSource(req);  
-    const referrer = req.get('referer') || req.headers.referer || 'direct';  
-      
-    const trackingSession = new Session({  
-      sessionId: newTrackingSessionId,  
-      sessionType: 'tracking',  
-      isAuthenticated: false,  
-      userId: null,  
-      ipAddress: req.ip,  
-      userAgent: userAgent,  
-      deviceType: deviceInfo.deviceType,  
-      deviceCategory: deviceInfo.deviceCategory,  
-      browser: deviceInfo.browser,  
-      browserVersion: deviceInfo.browserVersion,  
-      os: deviceInfo.os,  
-      osVersion: deviceInfo.osVersion,  
-      isTouchDevice: deviceInfo.isTouchDevice,  
-      referrer: referrer,  
-      source: source,  
-      startTime: new Date(),  
-      endTime: new Date(),  
-      pageCount: 1,  
-      isActive: true  
-    });  
-      
-    await trackingSession.save();  
-      
-    // Set tracking cookie (longer expiration for tracking)  
-    res.cookie(SESSION_CONFIG.COOKIE_NAMES?.TRACKING || 'tracking_session_id', newTrackingSessionId, {  
-      httpOnly: true,  
-      secure: process.env.NODE_ENV === 'production',  
-      sameSite: process.env.NODE_ENV === 'production' ? 'none' : 'strict',  
-      maxAge: SESSION_CONFIG.cookieExpiration,  
-      path: '/'  
-    });  
-      
-    res.json({  
-      success: true,  
-      message: 'Logged out successfully',  
-      data: {  
-        session: {  
-          id: newTrackingSessionId,  
-          type: 'tracking'  
-        }  
-      }  
-    });  
-      
-  } catch (error) {  
-    console.error('Logout error details:', error);  
-    res.status(500).json({  
-      success: false,  
-      error: 'Failed to logout: ' + error.message  
-    });  
-  }  
-}  
+// User logout
+  async logout(req, res) {
+    try {
+      const sessionId = req.cookies[SESSION_CONFIG.COOKIE_NAMES?.AUTH || 'session_id'];
+
+      if (sessionId) {
+        // Mark auth session as inactive
+        const authSession = await Session.findOne({
+          sessionId,
+          sessionType: 'authentication'
+        });
+
+        if (authSession) {
+          authSession.isActive = false;
+          authSession.endTime = new Date();
+          authSession.duration = Math.round((authSession.endTime - authSession.startTime) / 1000);
+          await authSession.save();
+          console.log('Auth session terminated:', sessionId);
+        }
+
+        // Clear auth cookie
+        res.clearCookie(SESSION_CONFIG.COOKIE_NAMES?.AUTH || 'session_id', {
+          path: '/',
+          httpOnly: true,
+          secure: process.env.NODE_ENV === 'production',
+          sameSite: process.env.NODE_ENV === 'production' ? 'none' : 'strict'
+        });
+
+        console.log('Auth cookie cleared');
+      }
+
+      // Create new tracking session for anonymous browsing
+      const newTrackingSessionId = `sess_track_${uuidv4()}_${Date.now()}`;
+
+      const userAgent = req.headers['user-agent'];
+      const deviceInfo = extractDeviceInfo(userAgent);
+      const source = determineSource(req);
+      const referrer = req.get('referer') || req.headers.referer || 'direct';
+
+      const trackingSession = new Session({
+        sessionId: newTrackingSessionId,
+        sessionType: 'tracking',
+        isAuthenticated: false,
+        userId: null,
+        ipAddress: req.ip,
+        userAgent: userAgent,
+        deviceType: deviceInfo.deviceType,
+        deviceCategory: deviceInfo.deviceCategory,
+        browser: deviceInfo.browser,
+        browserVersion: deviceInfo.browserVersion,
+        os: deviceInfo.os,
+        osVersion: deviceInfo.osVersion,
+        isTouchDevice: deviceInfo.isTouchDevice,
+        referrer: referrer,
+        source: source,
+        startTime: new Date(),
+        endTime: new Date(),
+        pageCount: 1,
+        isActive: true
+      });
+
+      await trackingSession.save();
+
+      // Set tracking cookie (longer expiration for tracking)
+      res.cookie(SESSION_CONFIG.COOKIE_NAMES?.TRACKING || 'tracking_session_id', newTrackingSessionId, {
+        httpOnly: true,
+        secure: process.env.NODE_ENV === 'production',
+        sameSite: process.env.NODE_ENV === 'production' ? 'none' : 'strict',
+        maxAge: SESSION_CONFIG.cookieExpiration,
+        path: '/'
+      });
+
+      res.json({
+        success: true,
+        message: 'Logged out successfully',
+        data: {
+          session: {
+            id: newTrackingSessionId,
+            type: 'tracking'
+          }
+        }
+      });
+
+    } catch (error) {
+      console.error('Logout error details:', error);
+      res.status(500).json({
+        success: false,
+        error: 'Failed to logout: ' + error.message
+      });
+    }
+  }
   
-// Get current session info  
-async getSessionInfo(req, res) {  
-  try {  
-    const sessionId = req.cookies[SESSION_CONFIG.COOKIE_NAMES?.AUTH || 'session_id'];  
-      
-    if (!sessionId) {  
-      return res.json({  
-        success: true,  
-        data: {  
-          isAuthenticated: false,  
-          sessionType: 'none'  
-        }  
-      });  
-    }  
-      
-    const session = await Session.findOne({   
-      sessionId,  
-      isActive: true   
-    });  
-      
-    if (!session) {  
-      // Clear invalid session cookie  
-      res.clearCookie(SESSION_CONFIG.COOKIE_NAMES?.AUTH || 'session_id');  
-        
-      return res.json({  
-        success: true,  
-        data: {  
-          isAuthenticated: false,  
-          sessionType: 'none'  
-        }  
-      });  
-    }  
-      
-    // Check if session is still active  
-    if (!session.isSessionActive()) {  
-      session.isActive = false;  
-      await session.save();  
-      res.clearCookie(SESSION_CONFIG.COOKIE_NAMES?.AUTH || 'session_id');  
-        
-      return res.json({  
-        success: true,  
-        data: {  
-          isAuthenticated: false,  
-          sessionType: 'expired'  
-        }  
-      });  
-    }  
-      
-    // Update session activity  
-    await session.extendSession();  
-      
-    const response = {  
-      success: true,  
-      data: {  
-        isAuthenticated: session.isAuthenticated,  
-        sessionType: session.sessionType,  
-        sessionId: session.sessionId,  
-        userId: session.userId,  
-        device: session.deviceType,  
-        browser: session.browser,  
-        pagesViewed: session.pageCount,  
-        duration: session.duration,  
-        isActive: session.isActive,  
-        startTime: session.startTime,  
-        lastActivity: session.endTime  
-      }  
-    };  
-      
-    // Add user info if authenticated  
-    if (session.isAuthenticated && session.userId) {  
-      const user = await User.findById(session.userId).select('-password');  
-      if (user) {  
-        response.data.user = {  
-          id: user._id,  
-          username: user.username,  
-          email: user.email,  
-          role: user.role,  
-          avatar: user.avatar,  
-          bio: user.bio  
-        };  
-      }  
-    }  
-      
-    res.json(response);  
-      
-  } catch (error) {  
-    console.error('Get session info error:', error);  
-    res.status(500).json({  
-      success: false,  
-      error: 'Failed to get session info'  
-    });  
-  }  
-}  
-  
-module.exports = {  
-  login,  
-  logout,  
-  getSessionInfo  
-};
+  // Get current session info
+  async getSessionInfo(req, res) {
+    try {
+      const sessionId = req.cookies[SESSION_CONFIG.COOKIE_NAMES?.AUTH || 'session_id'];
+
+      if (!sessionId) {
+        return res.json({
+          success: true,
+          data: {
+            isAuthenticated: false,
+            sessionType: 'none'
+          }
+        });
+      }
+
+      const session = await Session.findOne({
+        sessionId,
+        isActive: true
+      });
+
+      if (!session) {
+        // Clear invalid session cookie
+        res.clearCookie(SESSION_CONFIG.COOKIE_NAMES?.AUTH || 'session_id');
+
+        return res.json({
+          success: true,
+          data: {
+            isAuthenticated: false,
+            sessionType: 'none'
+          }
+        });
+      }
+
+      // Check if session is still active
+      if (!session.isSessionActive()) {
+        session.isActive = false;
+        await session.save();
+        res.clearCookie(SESSION_CONFIG.COOKIE_NAMES?.AUTH || 'session_id');
+
+        return res.json({
+          success: true,
+          data: {
+            isAuthenticated: false,
+            sessionType: 'expired'
+          }
+        });
+      }
+
+      // Update session activity
+      await session.extendSession();
+
+      const response = {
+        success: true,
+        data: {
+          isAuthenticated: session.isAuthenticated,
+          sessionType: session.sessionType,
+          sessionId: session.sessionId,
+          userId: session.userId,
+          device: session.deviceType,
+          browser: session.browser,
+          pagesViewed: session.pageCount,
+          duration: session.duration,
+          isActive: session.isActive,
+          startTime: session.startTime,
+          lastActivity: session.endTime
+        }
+      };
+
+      // Add user info if authenticated
+      if (session.isAuthenticated && session.userId) {
+        const user = await User.findById(session.userId).select('-password');
+        if (user) {
+          response.data.user = {
+            id: user._id,
+            username: user.username,
+            email: user.email,
+            role: user.role,
+            avatar: user.avatar,
+            bio: user.bio
+          };
+        }
+      }
+
+      res.json(response);
+
+    } catch (error) {
+      console.error('Get session info error:', error);
+      res.status(500).json({
+        success: false,
+        error: 'Failed to get session info'
+      });
+    }
+  }
+}
+
+module.exports = new AuthController();
