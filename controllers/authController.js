@@ -261,13 +261,13 @@ class AuthController {
     // Set the auth cookie (shorter expiration for security)  
     const authCookieMaxAge = 2 * 60 * 60 * 1000; // 2 hours for auth sessions  
       
-    res.cookie(SESSION_CONFIG.COOKIE_NAMES?.AUTH || 'session_id', sessionId, {  
-      httpOnly: true,  
-      secure: process.env.NODE_ENV === 'production',  
-      sameSite: process.env.NODE_ENV === 'production' ? 'none' : 'strict',  
-      maxAge: authCookieMaxAge,  
-      path: '/'  
-    });  
+    res.cookie(SESSION_CONFIG.COOKIE_NAMES?.AUTH || 'session_id', sessionId, {
+      httpOnly: true,
+      secure: process.env.NODE_ENV === 'production',
+      sameSite: process.env.NODE_ENV === 'production' ? 'none' : 'strict',
+      maxAge: authCookieMaxAge,
+      path: '/'
+    });
       
     console.log('Auth cookie set with 2-hour expiration');  
       
