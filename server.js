@@ -15,25 +15,29 @@ const fs = require('fs');
 const app = express();
 app.set('trust proxy', true); // IMPORTANT for Render/Vercel
 
-// ===== DATABASE CONNECTION FIRST =====
+// ===== ENVIRONMENT DETECTION =====
+// Force production mode on Render
+const hostname = process.env.RENDER_EXTERNAL_HOSTNAME || '';
+if (hostname.includes('.onrender.com') && process.env.NODE_ENV !== 'production') {
+  console.log('🎯 Render deployment detected, forcing production mode');
+  process.env.NODE_ENV = 'production';
+}
+
+console.log('🌍 Environment:', process.env.NODE_ENV);
+console.log('🏠 Hostname:', hostname);
+
+// ===== DATABASE CONNECTION =====
 (async () => {
   console.log('🔗 Connecting to MongoDB...');
-  const dbConnection = await connectDB();
-
-  // Wait for DB to be ready before starting server
-  if (dbConnection) {
-    try {
-      await waitForDB();
-      console.log('✅ Database ready, starting server...');
-      startServer();
-    } catch (error) {
-      console.error('❌ Database connection timeout:', error.message);
-      console.log('⚠️ Starting server with limited functionality...');
-      startServer(); // Start server anyway
-    }
-  } else {
-    console.log('⚠️ Starting server without database connection...');
+  try {
+    await connectDB();
+    await waitForDB();
+    console.log('✅ Database ready');
     startServer();
+  } catch (error) {
+    console.error('❌ Database connection failed:', error.message);
+    console.log('⚠️ Starting server with limited functionality...');
+    startServer(); // Start server anyway
   }
 })();
 
@@ -45,47 +49,56 @@ app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 // Cookie parsing middleware
 app.use(cookieParser());
 
-// Cookie debug and fix middleware
+// Cookie debug and fix middleware - UPDATED
 app.use((req, res, next) => {
+  // Detect if we're on Render
+  const isRender = req.headers.host?.includes('.onrender.com') || 
+                  process.env.RENDER_EXTERNAL_HOSTNAME?.includes('.onrender.com');
+  const isProduction = process.env.NODE_ENV === 'production' || isRender;
+  
   // Store original cookie functions
   const originalCookie = res.cookie;
   const originalClearCookie = res.clearCookie;
   
-  // Override res.cookie for debugging and fixing
+  // Override res.cookie
   res.cookie = function(name, value, options = {}) {
-    const isProduction = process.env.NODE_ENV === 'production';
-    
-    // Fixed cookie options for production
-    const fixedOptions = {
+    // Final cookie settings
+    const finalOptions = {
       ...options,
       httpOnly: true,
-      secure: isProduction, // true in production
-      sameSite: isProduction ? 'none' : 'lax', // 'none' for cross-site
-      path: '/',
-      maxAge: options.maxAge || (name.includes('auth') ? 2 * 60 * 60 * 1000 : 30 * 24 * 60 * 60 * 1000)
+      secure: isProduction, // true on Render
+      sameSite: isProduction ? 'none' : 'lax',
+      path: '/'
     };
     
-    // Add domain for production cookies (Render)
+    // Add domain for production cookies
     if (isProduction && !options.domain) {
-      fixedOptions.domain = '.onrender.com';
+      finalOptions.domain = '.onrender.com';
     }
     
-    console.log(`🍪 SET COOKIE: ${name} = ${typeof value === 'string' ? value.substring(0, 20) + '...' : 'object'}`);
+    // Set maxAge based on cookie type
+    if (!finalOptions.maxAge) {
+      if (name.includes('auth') || name === 'session_id') {
+        finalOptions.maxAge = 2 * 60 * 60 * 1000; // 2 hours
+      } else if (name.includes('tracking')) {
+        finalOptions.maxAge = 30 * 24 * 60 * 60 * 1000; // 30 days
+      }
+    }
+    
+    console.log(`🍪 SET COOKIE: ${name}`);
     console.log('   Options:', {
-      secure: fixedOptions.secure,
-      sameSite: fixedOptions.sameSite,
-      httpOnly: fixedOptions.httpOnly,
-      maxAge: fixedOptions.maxAge,
-      domain: fixedOptions.domain || 'default'
+      secure: finalOptions.secure,
+      sameSite: finalOptions.sameSite,
+      domain: finalOptions.domain,
+      maxAge: finalOptions.maxAge ? `${finalOptions.maxAge / (60 * 60 * 1000)}h` : 'default'
     });
     
-    return originalCookie.call(this, name, value, fixedOptions);
+    return originalCookie.call(this, name, value, finalOptions);
   };
   
   // Override res.clearCookie
   res.clearCookie = function(name, options = {}) {
-    const isProduction = process.env.NODE_ENV === 'production';
-    const fixedOptions = {
+    const finalOptions = {
       ...options,
       path: '/',
       httpOnly: true,
@@ -94,11 +107,11 @@ app.use((req, res, next) => {
     };
     
     if (isProduction && !options.domain) {
-      fixedOptions.domain = '.onrender.com';
+      finalOptions.domain = '.onrender.com';
     }
     
     console.log(`🗑️ CLEAR COOKIE: ${name}`);
-    return originalClearCookie.call(this, name, fixedOptions);
+    return originalClearCookie.call(this, name, finalOptions);
   };
   
   next();
@@ -113,13 +126,18 @@ const corsOptions = {
       'http://localhost:5173'
     ];
     
+    // Allow requests with no origin (like server-to-server)
+    if (!origin) {
+      return callback(null, true);
+    }
+    
     // In development, allow all
     if (process.env.NODE_ENV === 'development') {
       return callback(null, true);
     }
     
     // In production, check specific origins
-    if (!origin || allowedOrigins.includes(origin)) {
+    if (allowedOrigins.includes(origin)) {
       return callback(null, true);
     }
     
@@ -128,7 +146,7 @@ const corsOptions = {
   },
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization', 'Cookie', 'Set-Cookie'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'Cookie', 'Set-Cookie', 'Accept'],
   exposedHeaders: ['Set-Cookie']
 };
 
@@ -141,14 +159,15 @@ app.options('*', cors(corsOptions));
 // Security middleware
 app.use(helmet({
   crossOriginResourcePolicy: { policy: "cross-origin" },
-  contentSecurityPolicy: false // Disable for API
+  contentSecurityPolicy: false
 }));
 
 // Rate limiting
 const limiter = rateLimit({
   windowMs: 15 * 60 * 1000,
   max: 250,
-  message: { success: false, error: 'Too many requests' }
+  message: { success: false, error: 'Too many requests' },
+  skip: (req) => req.path === '/api/health'
 });
 
 app.use(limiter);
@@ -156,48 +175,35 @@ app.use(limiter);
 // Static files
 app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
 
-// ===== IMPORT MIDDLEWARE (AFTER DB CONNECTION) =====
-let trackPageView, authMiddleware, adminMiddleware, optionalAuthMiddleware, COOKIE_NAMES;
-
-// Dynamic imports to ensure DB is connected
-const loadMiddleware = () => {
-  const tracking = require('./middleware/tracking');
-  const auth = require('./middleware/auth');
-  
-  trackPageView = tracking.trackPageView || tracking;
-  authMiddleware = auth.authMiddleware;
-  adminMiddleware = auth.adminMiddleware;
-  optionalAuthMiddleware = auth.optionalAuthMiddleware;
-  COOKIE_NAMES = auth.COOKIE_NAMES || {
-    AUTH: 'session_id',
-    TRACKING: 'tracking_session_id'
-  };
-  
-  console.log('✅ Middleware loaded successfully');
-};
-
-// ===== ROUTES =====
-// First, add a simple health check that doesn't need DB
+// ===== TEST ENDPOINTS =====
 app.get('/api/health', (req, res) => {
   res.json({
     success: true,
     message: 'Server is running',
     timestamp: new Date().toISOString(),
     environment: process.env.NODE_ENV,
-    database: mongoose.connection.readyState === 1 ? 'connected' : 'connecting'
+    database: mongoose.connection.readyState === 1 ? 'connected' : 'disconnected',
+    hostname: req.headers.host,
+    isRender: req.headers.host?.includes('.onrender.com') || false
   });
 });
 
-// Test endpoints
+// Cookie test endpoints
 app.get('/api/test-cookie', (req, res) => {
-  const testValue = `test_${Date.now()}`;
+  const isRender = req.headers.host?.includes('.onrender.com');
+  const isProduction = process.env.NODE_ENV === 'production' || isRender;
   
-  res.cookie('test_cookie', testValue);
+  res.cookie('test_cookie', `render_${isRender}_prod_${isProduction}_${Date.now()}`);
   
   res.json({
     success: true,
     message: 'Test cookie set',
-    value: testValue,
+    environment: {
+      NODE_ENV: process.env.NODE_ENV,
+      isProduction: isProduction,
+      isRender: isRender,
+      host: req.headers.host
+    },
     requestCookies: req.cookies
   });
 });
@@ -208,96 +214,125 @@ app.get('/api/check-cookies', (req, res) => {
     cookies: req.cookies,
     headers: {
       origin: req.headers.origin,
-      cookie: req.headers.cookie
+      cookie: req.headers.cookie,
+      host: req.headers.host
     }
   });
 });
 
-// Wait for DB before loading other routes
+// ===== DATABASE CHECK MIDDLEWARE =====
 app.use((req, res, next) => {
-  if (mongoose.connection.readyState !== 1) {
-    console.log('⏳ Waiting for database connection...');
-    const checkConnection = () => {
-      if (mongoose.connection.readyState === 1) {
-        next();
-      } else {
-        setTimeout(checkConnection, 100);
-      }
-    };
-    checkConnection();
-  } else {
-    next();
+  // Skip DB check for health and test endpoints
+  if (req.path.startsWith('/api/health') || 
+      req.path.startsWith('/api/test-') || 
+      req.path.startsWith('/api/check-')) {
+    return next();
   }
-});
-
-// Load middleware when DB is ready
-app.use((req, res, next) => {
-  if (!trackPageView) {
-    loadMiddleware();
+  
+  if (mongoose.connection.readyState !== 1) {
+    console.log('⏳ Database not ready for:', req.path);
+    // Still continue, but tracking might not work
   }
   next();
 });
 
-// Apply tracking middleware
+// ===== IMPORT AND SETUP MIDDLEWARE =====
+let trackPageView, authMiddleware;
+
+const loadMiddleware = () => {
+  try {
+    // Import tracking
+    const tracking = require('./middleware/tracking');
+    trackPageView = tracking.trackPageView || tracking;
+    
+    // Import auth
+    const auth = require('./middleware/auth');
+    authMiddleware = auth.authMiddleware;
+    
+    console.log('✅ Middleware loaded');
+  } catch (error) {
+    console.error('❌ Failed to load middleware:', error.message);
+  }
+};
+
+// Load middleware immediately
+loadMiddleware();
+
+// ===== TRACKING MIDDLEWARE =====
 app.use((req, res, next) => {
-  // Skip tracking for health check
-  if (req.path === '/api/health' || req.path.startsWith('/uploads/')) {
+  // Skip tracking for certain endpoints
+  if (req.path.startsWith('/api/health') || 
+      req.path.startsWith('/api/test-') || 
+      req.path.startsWith('/api/check-') ||
+      req.path.startsWith('/uploads/')) {
     return next();
   }
   
   if (trackPageView) {
     trackPageView(req, res, next);
   } else {
+    console.log('⚠️ Tracking middleware not loaded');
     next();
   }
 });
 
-// Import routes dynamically
+// ===== LOAD ROUTES =====
 const setupRoutes = () => {
-  const articleRoutes = require('./routes/articles');
-  const authRoutes = require('./routes/auth');
-  const analyticsRoutes = require('./routes/analytics');
-  const newsletterRoutes = require('./routes/newsletter');
-  const adminRoutes = require('./routes/admin');
-  const userRoutes = require('./routes/users');
-  
-  // Apply routes
-  app.use('/api/articles', articleRoutes);
-  app.use('/api/auth', authRoutes);
-  app.use('/api/analytics', analyticsRoutes);
-  app.use('/api/newsletter', newsletterRoutes);
-  app.use('/api/admin', authMiddleware, adminRoutes);
-  app.use('/api/users', authMiddleware, userRoutes);
-  
-  console.log('✅ Routes loaded successfully');
+  try {
+    const articleRoutes = require('./routes/articles');
+    const authRoutes = require('./routes/auth');
+    const analyticsRoutes = require('./routes/analytics');
+    const newsletterRoutes = require('./routes/newsletter');
+    const adminRoutes = require('./routes/admin');
+    const userRoutes = require('./routes/users');
+    
+    app.use('/api/articles', articleRoutes);
+    app.use('/api/auth', authRoutes);
+    app.use('/api/analytics', analyticsRoutes);
+    app.use('/api/newsletter', newsletterRoutes);
+    app.use('/api/admin', authMiddleware, adminRoutes);
+    app.use('/api/users', authMiddleware, userRoutes);
+    
+    console.log('✅ Routes loaded');
+  } catch (error) {
+    console.error('❌ Failed to load routes:', error.message);
+  }
 };
 
-// ===== SERVER STARTUP FUNCTION =====
+// ===== SERVER STARTUP =====
 function startServer() {
-  // Load middleware before setting up routes
-  if (!trackPageView) {
-    loadMiddleware();
-  }
-
-  // Setup routes after DB is connected
+  // Setup routes
   setupRoutes();
+  
+  // 404 handler
+  app.use('*', (req, res) => {
+    res.status(404).json({
+      success: false,
+      error: 'Route not found'
+    });
+  });
+  
+  // Error handler
+  app.use((error, req, res, next) => {
+    console.error('Error:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Internal server error'
+    });
+  });
   
   const PORT = process.env.PORT || 5000;
   
   const server = app.listen(PORT, () => {
-    console.log(`\n✅ Server running in ${process.env.NODE_ENV} mode on port ${PORT}`);
-    console.log('📊 Session Model: Unified');
-    console.log('🍪 Cookie Settings:');
-    console.log(`   - Production: ${process.env.NODE_ENV === 'production'}`);
-    console.log(`   - Secure: ${process.env.NODE_ENV === 'production'}`);
-    console.log(`   - SameSite: ${process.env.NODE_ENV === 'production' ? 'none' : 'lax'}`);
-    console.log(`   - Domain: ${process.env.NODE_ENV === 'production' ? '.onrender.com' : 'localhost'}`);
+    console.log(`\n✅ Server running on port ${PORT}`);
+    console.log('🌍 Environment:', process.env.NODE_ENV);
+    console.log('🔒 Cookies: secure=true, sameSite=none, domain=.onrender.com');
     
     startBackgroundJobs();
   });
   
-  // Graceful shutdown
-  process.on('SIGTERM', async () => {
+  // ===== GRACEFUL SHUTDOWN - FIXED =====
+  process.on('SIGTERM', () => {
     console.log('SIGTERM received, shutting down gracefully');
     
     server.close(async () => {
@@ -305,20 +340,27 @@ function startServer() {
       
       try {
         // Mark active sessions as inactive
-        const Session = mongoose.model('Session');
-        const result = await Session.updateMany(
-          { isActive: true },
-          { isActive: false, endTime: new Date() }
-        );
-        console.log(`✅ ${result.modifiedCount} sessions marked inactive`);
+        if (mongoose.connection.readyState === 1) {
+          const Session = mongoose.model('Session');
+          const result = await Session.updateMany(
+            { isActive: true },
+            { isActive: false, endTime: new Date() }
+          );
+          console.log(`✅ ${result.modifiedCount} sessions marked inactive`);
+        }
       } catch (error) {
         console.error('❌ Error cleaning sessions:', error.message);
       }
       
-      mongoose.connection.close(false, () => {
+      try {
+        // Close MongoDB connection properly
+        await mongoose.disconnect();
         console.log('✅ MongoDB connection closed');
-        process.exit(0);
-      });
+      } catch (error) {
+        console.error('❌ Error closing MongoDB:', error.message);
+      }
+      
+      process.exit(0);
     });
   });
   
@@ -334,24 +376,19 @@ function startBackgroundJobs() {
     startTrendingScoreUpdates();
     console.log('✅ Trending score updates started');
   } else {
-    console.log('⏳ Waiting for DB before starting trending updates...');
-    const interval = setInterval(() => {
-      if (mongoose.connection.readyState === 1) {
-        clearInterval(interval);
-        startTrendingScoreUpdates();
-        console.log('✅ Trending score updates started');
-      }
-    }, 1000);
+    console.log('⏳ Database not ready for trending updates');
   }
   
   // Session cleanup job
   cron.schedule('*/15 * * * *', async () => {
     console.log('🧹 Starting session cleanup...');
     try {
-      const { cleanupExpiredSessions } = require('./middleware/auth');
-      const result = await cleanupExpiredSessions();
-      if (result > 0) {
-        console.log(`✅ Cleaned ${result} expired sessions`);
+      if (mongoose.connection.readyState === 1) {
+        const { cleanupExpiredSessions } = require('./models/Session');
+        const result = await cleanupExpiredSessions();
+        if (result > 0) {
+          console.log(`✅ Cleaned ${result} expired sessions`);
+        }
       }
     } catch (error) {
       console.error('❌ Session cleanup error:', error.message);
