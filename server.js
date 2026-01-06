@@ -20,9 +20,6 @@ const URLSecurity = require('./middleware/urlSecurity');
 
 const app = express();
 app.set('trust proxy', true);
-//const cron = require('node-cron');
-//const path = require('path');
-//const fs = require('fs');
 
 // Import routes
 const articleRoutes = require('./routes/articles');
@@ -31,79 +28,137 @@ const analyticsRoutes = require('./routes/analytics');
 const newsletterRoutes = require('./routes/newsletter');
 const subscriberRoutes = require('./routes/newsletter');
 const adminRoutes = require('./routes/admin');
-const stripeRoutes = require('./routes/stripe'); // FIXED: Changed from stripe-service to stripe
+const stripeRoutes = require('./routes/stripe');
 const adsSettingsRoutes = require('./routes/adsSettings');
 const userRoutes = require('./routes/users');
 const secureAdminRoutes = require('./routes/secureAdmin');
 
-// Import tracking middleware
-const { trackPageView } = require('./middleware/tracking');
+// Import unified session middleware
+const trackPageView = require('./middleware/tracking'); // This now creates tracking sessions only
+const { authMiddleware, adminMiddleware, optionalAuthMiddleware } = require('./middleware/auth');
+const { COOKIE_NAMES } = require('./middleware/auth');
+
+// Import session cleanup function
+const { cleanupExpiredSessions } = require('./models/Session');
 
 // Connect to database
 connectDB();
 
+// Static file serving
 app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
 
 // Security middleware
 app.use(helmet({
-  crossOriginResourcePolicy: { policy: "cross-origin" }
+  crossOriginResourcePolicy: { policy: "cross-origin" },
+  contentSecurityPolicy: {
+    directives: {
+      defaultSrc: ["'self'"],
+      styleSrc: ["'self'", "'unsafe-inline'"],
+      scriptSrc: ["'self'", "'unsafe-inline'", "'unsafe-eval'"],
+      imgSrc: ["'self'", "data:", "https:"],
+      connectSrc: ["'self'"],
+    },
+  }
 }));
 
-// CORS configuration
+// CORS configuration - IMPORTANT: Enhanced for session cookies
 const corsOptions = {
-  credentials: true
-};
-
-if (process.env.NODE_ENV === 'production') {
-  // In production, allow the specific frontend URL and common development URLs
-  corsOptions.origin = function (origin, callback) {
-    // Allow requests with no origin (like mobile apps or curl requests)
-    if (!origin) return callback(null, true);
-
+  origin: function (origin, callback) {
+    // Allow requests with no origin (like mobile apps, curl, server-to-server)
+    if (!origin && process.env.NODE_ENV === 'development') {
+      return callback(null, true);
+    }
+    
     const allowedOrigins = [
       process.env.FRONTEND_URL,
-      'https://blog1-frontend.vercel.app', // Your actual frontend URL      
-    ].filter(Boolean); // Remove undefined values
+      'https://blog1-frontend.vercel.app',
+      'http://localhost:3000', // For local development
+      'http://localhost:5173', // Vite dev server
+      'http://127.0.0.1:3000',
+      'http://127.0.0.1:5173'
+    ].filter(Boolean);
 
+    if (allowedOrigins.length === 0) {
+      console.warn('⚠️ No allowed origins configured in CORS');
+    }
+
+    // Allow all origins in development for testing
+    if (process.env.NODE_ENV === 'development') {
+      console.log(`🌐 Development CORS allowing origin: ${origin || 'no origin'}`);
+      return callback(null, true);
+    }
+
+    // In production, check against allowed origins
     if (allowedOrigins.includes(origin)) {
       return callback(null, true);
     }
 
-    console.log('CORS blocked origin:', origin);
+    console.log('🚫 CORS blocked origin:', origin);
     return callback(new Error('Not allowed by CORS'));
-  };
-} else {
-  // In development, allow localhost
-  corsOptions.origin = 'https://blog1-frontend.vercel.app';
-}
+  },
+  credentials: true, // REQUIRED for cookies/sessions
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'Cookie', 'Set-Cookie'],
+  exposedHeaders: ['Set-Cookie'], // Allow frontend to see Set-Cookie header
+  maxAge: 86400 // 24 hours
+};
 
 app.use(cors(corsOptions));
 
-// Rate limiting
+// Handle preflight requests
+app.options('*', cors(corsOptions));
+
+// Rate limiting - adjusted for session tracking
 const limiter = rateLimit({
   windowMs: 15 * 60 * 1000, // 15 minutes
-  max: process.env.NODE_ENV === 'production' ? 100 : 5000, // limit each IP - increased for development
+  max: process.env.NODE_ENV === 'production' ? 250 : 1000, // Increased for tracking sessions
   message: {
     success: false,
     error: 'Too many requests from this IP, please try again later.'
+  },
+  skip: (req) => {
+    // Skip rate limiting for certain paths or based on session type
+    const isHealthCheck = req.path === '/api/health';
+    const isPublicAsset = req.path.startsWith('/uploads/');
+    return isHealthCheck || isPublicAsset;
   }
 });
+
 app.use(limiter);
 
 // Body parsing middleware
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 
-// Cookie parsing middleware
+// Cookie parsing middleware - critical for session handling
 app.use(cookieParser());
 
-// Tracking middleware - track all page views
+// IMPORTANT: Session Middleware Order
+console.log('🔐 Setting up session middleware in correct order...');
+
+// 1. FIRST: Tracking middleware for ALL visitors
+// This creates tracking sessions for anonymous users
+console.log('📊 1. Tracking middleware (for all visitors)...');
 app.use(trackPageView);
 
-// Debug route registration
-console.log('🚀 Registering Routes...');
+// Debug middleware to see what sessions are present
+app.use((req, res, next) => {
+  console.log('🕵️‍♂️ Session Debug Middleware:');
+  console.log('  Cookies:', Object.keys(req.cookies || {}));
+  console.log('  Has tracking cookie?', !!req.cookies[COOKIE_NAMES.TRACKING]);
+  console.log('  Has auth cookie?', !!req.cookies[COOKIE_NAMES.AUTH]);
+  console.log('  IP:', req.ip);
+  console.log('  User Agent:', req.headers['user-agent']?.substring(0, 50) + '...');
+  next();
+});
 
-// ===== DEBUG: CHECK ALL ROUTES =====
+// 2. Optional auth for certain routes (like getting current user)
+// This runs after tracking but before specific route handlers
+
+// Routes registration
+console.log('\n🚀 Registering Routes...');
+
+// Debug route registration
 console.log('\n🔍 DEBUG: Checking all route files...');
 
 // Check ads routes
@@ -151,28 +206,78 @@ if (!fs.existsSync(stripeRoutePath)) {
   console.log('❌ routes/stripe.js file not found! Please create it.');
   console.log('💡 Create a file named stripe.js in your routes folder with the test-connection route.');
 }
-// ===== END DEBUG =====
 
-// Routes
-app.use('/api/articles', articleRoutes);
+// ===== ROUTE REGISTRATION =====
+console.log('\n📍 Registering Routes with Session Handling...');
+
+// Public routes (tracking sessions only)
+app.use('/api/analytics', analyticsRoutes); // Analytics doesn't require auth
+
+// Auth routes (login/logout - tracking sessions can be converted here)
 app.use('/api/auth', authRoutes);
-app.use('/api/ads', adRoutes); // Use the (possibly fallback) ads routes
-app.use('/api/ads', adsSettingsRoutes); // Ads settings routes
-app.use('/api/analytics', analyticsRoutes);
-app.use('/api/newsletter', newsletterRoutes);
-app.use('/api/admin', adminRoutes);
-app.use('/api/admin/secure', secureAdminRoutes); // Secure admin routes with URL obfuscation
-app.use('/api/newsletter', subscriberRoutes);
-app.use('/api/ads/stripe', stripeRoutes); // FIXED: Changed from /stripe-service to /stripe
-app.use('/api/users', userRoutes);
 
-// Health check endpoint
+// Article routes (mixed - some public, some protected)
+app.use('/api/articles', articleRoutes);
+
+// Newsletter routes (public subscription)
+app.use('/api/newsletter', newsletterRoutes);
+app.use('/api/newsletter', subscriberRoutes);
+
+// Ads routes
+app.use('/api/ads', adRoutes);
+app.use('/api/ads', adsSettingsRoutes);
+
+// Stripe routes
+app.use('/api/ads/stripe', stripeRoutes);
+
+// User routes (require authentication)
+app.use('/api/users', authMiddleware, userRoutes);
+
+// Admin routes (require authentication AND admin role)
+app.use('/api/admin', authMiddleware, adminRoutes);
+
+// Secure admin routes with URL obfuscation
+app.use('/api/admin/secure', authMiddleware, adminMiddleware, secureAdminRoutes);
+
+// Health check endpoint (no auth required, but still tracked)
 app.get('/api/health', (req, res) => {
+  const sessionInfo = {
+    hasTrackingSession: !!req.cookies[COOKIE_NAMES.TRACKING],
+    hasAuthSession: !!req.cookies[COOKIE_NAMES.AUTH],
+    sessionModel: 'unified',
+    environment: process.env.NODE_ENV
+  };
+  
   res.json({
     success: true,
-    message: 'Server is running',
+    message: 'Server is running with unified session model',
     timestamp: new Date().toISOString(),
-    environment: process.env.NODE_ENV
+    environment: process.env.NODE_ENV,
+    session: sessionInfo
+  });
+});
+
+// Session info endpoint (for debugging)
+app.get('/api/session-info', optionalAuthMiddleware, (req, res) => {
+  res.json({
+    success: true,
+    data: {
+      cookies: Object.keys(req.cookies || {}),
+      sessionType: req.sessionType || 'none',
+      hasTrackingCookie: !!req.cookies[COOKIE_NAMES.TRACKING],
+      hasAuthCookie: !!req.cookies[COOKIE_NAMES.AUTH],
+      user: req.user ? {
+        id: req.user._id,
+        email: req.user.email,
+        role: req.user.role
+      } : null,
+      session: req.session ? {
+        id: req.session.sessionId,
+        type: req.session.sessionType,
+        userId: req.session.userId,
+        isAuthenticated: req.session.isAuthenticated
+      } : null
+    }
   });
 });
 
@@ -197,13 +302,24 @@ app._router.stack.forEach((middleware) => {
 app.use('*', (req, res) => {
   res.status(404).json({
     success: false,
-    error: 'Route not found: ' + req.originalUrl
+    error: 'Route not found: ' + req.originalUrl,
+    sessionTip: 'Are you using the correct session type? Tracking sessions cannot access protected routes.'
   });
 });
 
 // Global error handler
 app.use((error, req, res, next) => {
   console.error('Global error handler:', error);
+  
+  // Session-related errors
+  if (error.message && error.message.includes('session')) {
+    return res.status(401).json({
+      success: false,
+      error: 'Session error',
+      message: error.message,
+      tip: 'Try logging in again or clearing your cookies.'
+    });
+  }
   
   // Mongoose validation error
   if (error.name === 'ValidationError') {
@@ -242,7 +358,8 @@ app.use((error, req, res, next) => {
   // Default error
   res.status(500).json({
     success: false,
-    error: process.env.NODE_ENV === 'production' ? 'Internal server error' : error.message
+    error: process.env.NODE_ENV === 'production' ? 'Internal server error' : error.message,
+    sessionModel: 'unified'
   });
 });
 
@@ -253,8 +370,17 @@ const USE_HTTPS = process.env.USE_HTTPS === 'true' || process.env.NODE_ENV === '
 const server = USE_HTTPS ? sslConfig.createHTTPSServer(app, PORT) : app.listen(PORT, () => {
   console.log(`\n✅ Server running in ${process.env.NODE_ENV} mode on port ${PORT}`);
   console.log(`🔗 URL: http://localhost:${PORT}`);
-  console.log('⚠️  WARNING: Running in HTTP mode. URLs are not encrypted!');
-  console.log('💡 To enable HTTPS, set USE_HTTPS=true in environment variables');
+  console.log('📊 Session Model: Unified (tracking + authentication)');
+  console.log('🍪 Cookie Names:');
+  console.log(`   - Auth: ${COOKIE_NAMES.AUTH} (2h expiry)`);
+  console.log(`   - Tracking: ${COOKIE_NAMES.TRACKING} (30d expiry)`);
+  
+  if (!USE_HTTPS) {
+    console.log('⚠️  WARNING: Running in HTTP mode. URLs are not encrypted!');
+    console.log('💡 To enable HTTPS, set USE_HTTPS=true in environment variables');
+  }
+  
+  startBackgroundJobs();
 });
 
 if (USE_HTTPS && server) {
@@ -262,11 +388,7 @@ if (USE_HTTPS && server) {
   server.on('listening', () => {
     console.log(`🔒 HTTPS Server running on https://localhost:${PORT}`);
     console.log('✅ URLs are now encrypted with SSL/TLS');
-    startBackgroundJobs();
   });
-} else if (!USE_HTTPS) {
-  // Start background jobs for HTTP server
-  startBackgroundJobs();
 }
 
 function startBackgroundJobs() {
@@ -284,15 +406,28 @@ function startBackgroundJobs() {
     }
   });
 
-  // Session cleanup job - run every 30 minutes
-  cron.schedule('*/30 * * * *', async () => {
+  // Enhanced Session cleanup job - run every 15 minutes
+  cron.schedule('*/15 * * * *', async () => {
     console.log('🧹 Starting session cleanup...');
     try {
-      const { cleanupExpiredSessions } = require('./middleware/tracking');
-      const cleanedCount = await cleanupExpiredSessions();
-
-      if (cleanedCount > 0) {
-        console.log(`✅ Session cleanup completed: ${cleanedCount} expired sessions cleaned up`);
+      const cutoffTime = new Date(Date.now() - (8 * 60 * 60 * 1000)); // 8 hours max
+      
+      // Clean up expired sessions
+      const result = await cleanupExpiredSessions();
+      
+      // Also clean up very old sessions (older than 30 days)
+      const thirtyDaysAgo = new Date(Date.now() - (30 * 24 * 60 * 60 * 1000));
+      const oldSessions = await mongoose.model('Session').deleteMany({
+        endTime: { $lt: thirtyDaysAgo },
+        isActive: false
+      });
+      
+      if (oldSessions.deletedCount > 0) {
+        console.log(`🗑️  Deleted ${oldSessions.deletedCount} old inactive sessions`);
+      }
+      
+      if (result > 0) {
+        console.log(`✅ Session cleanup completed: ${result} expired sessions cleaned up`);
       } else {
         console.log('ℹ️ Session cleanup completed: No expired sessions found');
       }
@@ -302,13 +437,30 @@ function startBackgroundJobs() {
   });
 
   console.log('📅 Newsletter scheduler started - Weekly delivery every Sunday at 10 AM');
-  console.log('🧹 Session cleanup scheduler started - Every 30 minutes');
+  console.log('🧹 Session cleanup scheduler started - Every 15 minutes');
+  console.log('🔥 Trending score updates running in background');
 }
 
 // Graceful shutdown
 process.on('SIGTERM', () => {
   console.log('SIGTERM received, shutting down gracefully');
-  process.exit(0);
+  
+  // Clean up any active sessions on shutdown
+  mongoose.model('Session').updateMany(
+    { isActive: true },
+    { 
+      isActive: false,
+      endTime: new Date(),
+      duration: { $round: [{ $subtract: [new Date(), '$startTime'] }, 1000] }
+    }
+  ).then(() => {
+    console.log('✅ All active sessions marked as inactive');
+    process.exit(0);
+  }).catch(error => {
+    console.error('❌ Error cleaning up sessions on shutdown:', error);
+    process.exit(1);
+  });
 });
 
-module.exports = app;
+// Export for testing
+module.exports = { app, server };
