@@ -210,4 +210,8 @@ sessionSchema.statics.findAuthSession = async function(sessionId) {
   return null;
 };
 
-module.exports = { Session: mongoose.model('Session', sessionSchema), SESSION_CONFIG };
+const Session = mongoose.model('Session', sessionSchema);
+
+module.exports = Session;
+module.exports.Session = Session;
+module.exports.SESSION_CONFIG = SESSION_CONFIG;
