@@ -281,6 +281,7 @@ const setupRoutes = () => {
     const newsletterRoutes = require('./routes/newsletter');
     const adminRoutes = require('./routes/admin');
     const userRoutes = require('./routes/users');
+    const adsRoutes = require('./routes/ads');
     
     app.use('/api/articles', articleRoutes);
     app.use('/api/auth', authRoutes);
@@ -288,6 +289,7 @@ const setupRoutes = () => {
     app.use('/api/newsletter', newsletterRoutes);
     app.use('/api/admin', authMiddleware, adminRoutes);
     app.use('/api/users', authMiddleware, userRoutes);
+    app.use('/api/ads', adsRoutes);
     
     console.log('✅ Routes loaded');
   } catch (error) {
