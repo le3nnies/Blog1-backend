@@ -5,6 +5,63 @@ const Newsletter = require('../models/Newsletter');
 const Analytics = require('../models/Analytics');
 
 class UserController {
+
+  // Create new user (Admin only)  
+  async createUser(req, res) {  
+    try {  
+      const { username, email, password, role = 'author', bio, avatar } = req.body;  
+  
+      // Validate required fields  
+      if (!username || !email || !password) {  
+        return res.status(400).json({  
+          success: false,  
+          error: 'Username, email, and password are required'  
+        });  
+      }  
+  
+      // Check if user already exists  
+      const existingUser = await User.findOne({  
+        $or: [{ email }, { username }]  
+      });  
+  
+      if (existingUser) {  
+        return res.status(400).json({  
+          success: false,  
+          error: 'User with this email or username already exists'  
+        });  
+      }  
+  
+      // Create new user  
+      const newUser = new User({  
+        username,  
+        email,  
+        password, // Will be hashed by pre-save hook  
+        role,  
+        bio,  
+        avatar,  
+        isActive: true  
+      });  
+  
+      await newUser.save();  
+  
+      // Remove password from response  
+      const userResponse = newUser.toObject();  
+      delete userResponse.password;  
+  
+      res.status(201).json({  
+        success: true,  
+        data: userResponse,  
+        message: 'User created successfully'  
+      });  
+    } catch (error) {  
+      console.error('Create user error:', error);  
+      res.status(500).json({  
+        success: false,  
+        error: 'Failed to create user'  
+      });  
+    }  
+  }  
+  
   
   // Get all users with pagination and filtering (Admin only)
   async getAllUsers(req, res) {
